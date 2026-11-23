@@ -66,6 +66,12 @@ def _require_plotly() -> Any:
             "instale con: pip install plotly"
         ) from exc
 
+from src.process.relief_3d import (
+    build_deckgl_3d_relief_html,
+    build_guatemala_relief_scene,
+    render_guatemala_with_blender,
+)
+
 
 def _resolve_raw_path(file_path: Union[str, Path]) -> Path:
     """Resolver ruta de archivo en directorio raw buscando coincidencias si es necesario."""
@@ -243,12 +249,27 @@ def merge_geo_with_parquet(
     return merged_geodata
 
 
+def derive_topic_title(parquet_name_or_path: Union[str, Path], fallback_col: str = "valor") -> str:
+    """Deducir un titulo descriptivo del tema a partir del nombre del archivo parquet o columna."""
+    stem = Path(parquet_name_or_path).stem
+    # remover prefijos comunes para obtener el nombre del tema
+    clean = stem
+    for prefix in ["resumen_", "datos_", "tabla_", "ine_", "gt_", "mapa_"]:
+        if clean.lower().startswith(prefix):
+            clean = clean[len(prefix):]
+    words = clean.replace("_", " ").strip()
+    if words:
+        return words.title()
+    return fallback_col.replace("_", " ").title()
+
+
 def build_guatemala_sidebar_html(
     merged_gdf: Any,
     value_col: str = "valor",
-    name_col: str = "nombre"
+    name_col: str = "nombre",
+    topic_title: Optional[str] = None
 ) -> str:
-    """Construir panel lateral flotante con kpis y ranking de departamentos."""
+    """Construir panel lateral flotante con kpis, ranking de departamentos y boton de centrado."""
     try:
         if not hasattr(merged_gdf, "sort_values") or value_col not in getattr(merged_gdf, "columns", []):
             return ""
@@ -259,6 +280,7 @@ def build_guatemala_sidebar_html(
         min_row = sorted_df.iloc[-1]
         avg_val = int(merged_gdf[value_col].mean())
         max_num = max_row[value_col] if max_row[value_col] > 0 else 1
+        display_topic = topic_title or f"Datos de {value_col.capitalize()}"
 
         items_html = ""
         for idx, (_, row) in enumerate(sorted_df.iterrows(), start=1):
@@ -284,11 +306,17 @@ def build_guatemala_sidebar_html(
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="font-size:22px;">🇬🇹</span>
               <div>
-                <h3 style="margin:0; font-size:14px; font-weight:800; letter-spacing:-0.2px;">Estadísticas de Guatemala</h3>
+                <h3 style="margin:0; font-size:13px; font-weight:800; letter-spacing:-0.2px;">Estadísticas de Guatemala</h3>
                 <p style="margin:1px 0 0 0; font-size:10px; opacity:0.85;">Instituto Nacional de Estadística (INE)</p>
+                <div style="font-size:11px; font-weight:700; color:#38bdf8; margin-top:3px; background:rgba(56,189,248,0.18); padding:2px 7px; border-radius:4px; display:inline-block; border:1px solid rgba(56,189,248,0.3);">
+                  📊 {display_topic}
+                </div>
               </div>
             </div>
-            <button onclick="var c=document.getElementById('gt-panel-content'); var b=this; if(c.style.display==='none'){{c.style.display='flex'; b.innerText='—';}}else{{c.style.display='none'; b.innerText='+';}}" style="background:rgba(255,255,255,0.2); border:none; color:white; border-radius:6px; cursor:pointer; font-size:14px; font-weight:bold; width:26px; height:26px; display:flex; align-items:center; justify-content:center;">—</button>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <button onclick="centrarMapaGuatemala()" style="background:#0284c7; border:none; color:white; border-radius:6px; cursor:pointer; font-size:11px; font-weight:700; padding:5px 9px; display:inline-flex; align-items:center; gap:3px; box-shadow:0 2px 4px rgba(0,0,0,0.3);" title="Centrar mapa en Guatemala">🎯 Centrar</button>
+              <button onclick="var c=document.getElementById('gt-panel-content'); var b=this; if(c.style.display==='none'){{c.style.display='flex'; b.innerText='—';}}else{{c.style.display='none'; b.innerText='+';}}" style="background:rgba(255,255,255,0.2); border:none; color:white; border-radius:6px; cursor:pointer; font-size:14px; font-weight:bold; width:26px; height:26px; display:flex; align-items:center; justify-content:center;">—</button>
+            </div>
           </div>
           <div id="gt-panel-content" style="display:flex; flex-direction:column; overflow:hidden;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
@@ -314,6 +342,35 @@ def build_guatemala_sidebar_html(
               {items_html}
             </div>
           </div>
+          <script>
+            function centrarMapaGuatemala() {{
+              try {{
+                for (var k in window) {{
+                  try {{
+                    if (window[k] && window[k]._leaflet_id && typeof window[k].fitBounds === 'function') {{
+                      window[k].fitBounds([[13.73, -92.25], [17.82, -88.22]]);
+                      return;
+                    }}
+                  }} catch(e) {{}}
+                }}
+                var pDiv = document.querySelector('.plotly-graph-div') || document.querySelector('.js-plotly-plot');
+                if (pDiv && typeof Plotly !== 'undefined') {{
+                  var relayoutUpdate = {{
+                    'map.center.lat': 15.78, 'map.center.lon': -90.23, 'map.zoom': 6.3,
+                    'mapbox.center.lat': 15.78, 'mapbox.center.lon': -90.23, 'mapbox.zoom': 6.3
+                  }};
+                  Plotly.relayout(pDiv, relayoutUpdate);
+                  return;
+                }}
+                if (window.deckInstance && typeof window.centrarMapaGuatemala === 'function') {{
+                  window.centrarMapaGuatemala();
+                  return;
+                }}
+              }} catch(err) {{
+                console.error('Error al centrar mapa:', err);
+              }}
+            }}
+          </script>
         </div>
         """
         return sidebar_html
@@ -327,7 +384,8 @@ def export_folium_map(
     value_col: str = "valor",
     colormap: str = "YlOrRd",
     tooltip_cols: Optional[List[str]] = None,
-    tiles: str = "Esri.WorldGrayCanvas"
+    tiles: str = "Esri.WorldGrayCanvas",
+    topic_title: Optional[str] = None
 ) -> Path:
     """Generar mapa interactivo folium exportable a archivo html con panel lateral y vista de guatemala."""
     folium = _require_folium()
@@ -385,7 +443,9 @@ def export_folium_map(
         pass
 
     # inyectar panel lateral con estadisticas de guatemala
-    sidebar_markup = build_guatemala_sidebar_html(merged_gdf, value_col=value_col)
+    sidebar_markup = build_guatemala_sidebar_html(
+        merged_gdf, value_col=value_col, topic_title=topic_title
+    )
     if sidebar_markup:
         try:
             interactive_map.get_root().html.add_child(folium.Element(sidebar_markup))
@@ -407,7 +467,8 @@ def create_plotly_choropleth(
     map_style: str = "white-bg",
     color_scale: str = "Turbo",
     pitch: int = 40,
-    bearing: int = 0
+    bearing: int = 0,
+    topic_title: Optional[str] = None
 ) -> Any:
     """Construir mapa coropletico con plotly express con vista 3D y encuadre en Guatemala."""
     px = _require_plotly()
@@ -477,9 +538,16 @@ def create_plotly_choropleth(
     except Exception:
         pass
 
-    # ajustar margenes para ocupar el espacio completo de visualizacion
+    # ajustar margenes y titulo descriptivo
+    display_title = (
+        f"🇬🇹 Estadísticas de Guatemala (INE) - {topic_title}"
+        if topic_title
+        else f"🇬🇹 Estadísticas Oficiales de Guatemala (INE) - {value_col.capitalize()}"
+    )
     figure.update_layout(
         margin={"r": 0, "t": 45, "l": 0, "b": 0},
-        title={"text": f"🇬🇹 Estadísticas Oficiales de Guatemala (INE) - {value_col.capitalize()}", "x": 0.05, "y": 0.96}
+        title={"text": display_title, "x": 0.05, "y": 0.96}
     )
     return figure
+
+

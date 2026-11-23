@@ -240,3 +240,122 @@ def test_api_get_plotly_choropleth_map(mock_load, mock_merge, mock_plotly):
     resp_json = client.get("/api/v1/proceso/mapa-plotly?ruta_geo=geo.shp&ruta_parquet=t.parquet&formato=json")
     assert resp_json.status_code == 200
     assert "data" in resp_json.json()
+
+
+def test_derive_topic_title():
+    """Verificar deduccion automatica de titulos descriptivos a partir del nombre parquet."""
+    from src.process.process import derive_topic_title
+
+    assert derive_topic_title("data/processed/resumen_accidentes_2025.parquet") == "Accidentes 2025"
+    assert derive_topic_title("datos_poblacion_censo.parquet") == "Poblacion Censo"
+    assert derive_topic_title("mapa_vehiculos_involucrados.parquet") == "Vehiculos Involucrados"
+
+
+def test_build_guatemala_sidebar_html_elements():
+    """Verificar que el panel lateral contenga tema descriptivo, ine y boton de centrado."""
+    import pandas as pd
+    from src.process.process import build_guatemala_sidebar_html
+
+    fake_df = pd.DataFrame({
+        "cod": ["01", "02"],
+        "nombre": ["Guatemala", "El Progreso"],
+        "valor": [5000, 120]
+    })
+
+    html = build_guatemala_sidebar_html(fake_df, value_col="valor", name_col="nombre", topic_title="Accidentes de Transito")
+    assert "Estadísticas de Guatemala" in html
+    assert "Instituto Nacional de Estadística (INE)" in html
+    assert "Accidentes de Transito" in html
+    assert "🎯 Centrar" in html
+    assert "centrarMapaGuatemala()" in html
+
+
+def test_build_deckgl_3d_relief_html_elements():
+    """Verificar que la vista 3D en deck.gl incluya panel lateral y boton centrar."""
+    import pandas as pd
+    from src.process.relief_3d import build_deckgl_3d_relief_html
+
+    mock_gdf = MagicMock()
+    mock_gdf.columns = ["cod", "nombre", "valor"]
+    mock_gdf.__len__.return_value = 1
+    mock_gdf.__getitem__.side_effect = lambda key: pd.Series([2500]) if key == "valor" else pd.Series(["Guatemala"])
+    mock_gdf.sort_values.return_value = pd.DataFrame([{"nombre": "Guatemala", "valor": 2500}])
+    mock_gdf.__geo_interface__ = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"cod": "01", "nombre": "Guatemala", "valor": 2500},
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}
+        }]
+    }
+
+    html = build_deckgl_3d_relief_html(mock_gdf, value_col="valor", topic_title="Heridos 2025")
+    assert "deck.gl" in html
+    assert "Heridos 2025" in html
+    assert "🎯 Centrar" in html
+    assert "FlyToInterpolator" in html
+    assert "Perspectivas y Controles 3D" in html
+    assert "22 Colores" in html
+    assert "Relieve Negro" in html
+    assert "setPerspective" in html
+
+
+@patch("src.api.v1.endpoints.process_router.build_deckgl_3d_relief_html")
+@patch("src.api.v1.endpoints.process_router.merge_geo_with_parquet")
+@patch("src.api.v1.endpoints.process_router.load_geodata")
+def test_api_get_3d_relief_map(mock_load, mock_merge, mock_deck):
+    """Verificar endpoint de mapa 3D interactivo."""
+    mock_deck.return_value = "<html><body>mapa 3d deckgl</body></html>"
+    response = client.get("/api/v1/proceso/mapa-3d-relieve?ruta_geo=geo.shp&ruta_parquet=resumen_2025.parquet&estilo_color=negro")
+    assert response.status_code == 200
+    assert "mapa 3d deckgl" in response.text
+
+
+@patch("src.api.v1.endpoints.process_router.build_guatemala_relief_scene")
+@patch("src.api.v1.endpoints.process_router.merge_geo_with_parquet")
+@patch("src.api.v1.endpoints.process_router.load_geodata")
+def test_api_get_printable_3d_model(mock_load, mock_merge, mock_scene, tmp_path):
+    """Verificar endpoint de generacion de modelo 3D descargable para impresion."""
+    mock_scene_obj = MagicMock()
+    mock_geom = MagicMock()
+    mock_geom.export.return_value = b"STL_BYTES"
+    mock_scene_obj.geometry = {"depto_01": mock_geom}
+    mock_scene.return_value = mock_scene_obj
+
+    # parchear directorio procesado para prueba
+    with patch("src.api.v1.endpoints.process_router.PROCESSED_DATA_DIR", tmp_path):
+        def fake_export(path):
+            Path(path).write_bytes(b"GLB_MOCK_BYTES")
+        mock_scene_obj.export.side_effect = fake_export
+
+        # probar formato glb (para blender)
+        resp_glb = client.get("/api/v1/proceso/modelo-3d-impresion?ruta_geo=geo.shp&ruta_parquet=t.parquet&formato=glb")
+        assert resp_glb.status_code == 200
+        assert resp_glb.content == b"GLB_MOCK_BYTES"
+
+        # probar formato zip (pack stl por depto)
+        resp_zip = client.get("/api/v1/proceso/modelo-3d-impresion?ruta_geo=geo.shp&ruta_parquet=t.parquet&formato=zip")
+        assert resp_zip.status_code == 200
+        assert len(resp_zip.content) > 0
+
+
+@patch("src.api.v1.endpoints.process_router.render_guatemala_with_blender")
+@patch("src.api.v1.endpoints.process_router.build_guatemala_relief_scene")
+@patch("src.api.v1.endpoints.process_router.merge_geo_with_parquet")
+@patch("src.api.v1.endpoints.process_router.load_geodata")
+def test_api_get_blender_3d_render(mock_load, mock_merge, mock_scene, mock_render, tmp_path):
+    """Verificar endpoint de renderizado con Blender headless."""
+    mock_scene_obj = MagicMock()
+    mock_scene.return_value = mock_scene_obj
+
+    with patch("src.api.v1.endpoints.process_router.PROCESSED_DATA_DIR", tmp_path):
+        def fake_render(*args, **kwargs):
+            out_p = kwargs.get("output_png_path") or args[1]
+            Path(out_p).write_bytes(b"PNG_MOCK_RENDER")
+            return Path(out_p)
+        mock_render.side_effect = fake_render
+
+        response = client.get("/api/v1/proceso/render-3d-blender?ruta_geo=geo.shp&ruta_parquet=t.parquet&estilo_color=negro")
+        assert response.status_code == 200
+        assert response.content == b"PNG_MOCK_RENDER"
+
