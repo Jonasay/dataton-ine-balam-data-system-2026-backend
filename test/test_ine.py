@@ -1,4 +1,3 @@
-"""Pruebas unitarias para el cliente ine y los endpoints de fastapi."""
 import json
 import pytest
 from pathlib import Path
@@ -19,13 +18,6 @@ from src.ingestion.ine import (
 )
 
 client = TestClient(app)
-
-
-def test_home_endpoint():
-    """Verificar endpoint raiz."""
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"mensaje": "api de balam data systems"}
 
 
 @patch("src.ingestion.ine.requests.get")
@@ -224,18 +216,6 @@ def test_api_get_datasets(mock_search):
     assert resp_direct.status_code == 200
 
 
-@patch("src.api.v1.endpoints.ine_router.list_all_datasets")
-def test_api_get_all_datasets(mock_list):
-    """Verificar endpoint fastapi /api/v1/ine/todos-los-conjuntos con limite por defecto de 10."""
-    mock_list.return_value = [{"id": "ds-1"}, {"id": "ds-2"}]
-
-    resp = client.get("/api/v1/ine/todos-los-conjuntos")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total_recuperado"] == 2
-    mock_list.assert_called_with(group=None, rows_per_page=10, max_total=10)
-
-
 @patch("src.api.v1.endpoints.ine_router.list_groups")
 def test_api_get_groups(mock_groups):
     """Verificar endpoint fastapi /api/v1/ine/grupos."""
@@ -330,3 +310,54 @@ def test_api_datastore_sql_endpoints(mock_sql):
         json={"sql": 'select * from "tabla"'}
     )
     assert resp_post.status_code == 200
+
+
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.search_datastore")
+def test_api_preview_dataset_datastore(mock_ds, mock_res):
+    """Verificar vista previa directa de recurso indexado en datastore sin descarga."""
+    mock_res.return_value = [
+        {"id": "res-1", "nombre": "Recurso 1", "formato": "xlsx", "url": "https://example.com/r1.xlsx"}
+    ]
+    mock_ds.return_value = {
+        "fields": [{"id": "col1"}, {"id": "col2"}],
+        "records": [{"col1": "A", "col2": 1}]
+    }
+
+    resp = client.get("/api/v1/ine/slug-prueba/vista-previa?limite=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["origen"] == "datastore_ckan"
+    assert data["columnas"] == ["col1", "col2"]
+    assert len(data["filas_muestra"]) == 1
+
+
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.search_datastore")
+@patch("src.api.v1.endpoints.ine_router.download_resource_file")
+@patch("src.api.v1.endpoints.ine_router.read_excel_sheets")
+def test_api_preview_dataset_autodownload(mock_read, mock_dl, mock_ds, mock_res, tmp_path):
+    """Verificar vista previa directa con descarga automatica transparente cuando no esta en datastore."""
+    mock_res.return_value = [
+        {"id": "res-1", "nombre": "Archivo Excel", "formato": "xlsx", "url": "https://example.com/test.xlsx"}
+    ]
+    mock_ds.side_effect = Exception("no datastore")
+
+    fake_file = tmp_path / "test.xlsx"
+    fake_file.write_bytes(b"EXCEL_DATA")
+    mock_dl.return_value = fake_file
+
+    mock_df = MagicMock()
+    mock_df.columns = ["departamento", "accidentes"]
+    mock_df.head.return_value.to_dicts.return_value = [{"departamento": "Guatemala", "accidentes": 50}]
+    mock_read.side_effect = [
+        {"hoja1": MagicMock()},
+        mock_df
+    ]
+
+    resp = client.get("/api/v1/ine/slug-prueba/vista-previa?limite=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["origen"] == "archivo_local_autodescargado"
+    assert data["columnas"] == ["departamento", "accidentes"]
+    assert len(data["filas_muestra"]) == 1

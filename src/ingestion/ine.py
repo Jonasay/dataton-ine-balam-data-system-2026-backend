@@ -1,4 +1,3 @@
-"""Cliente ckan para el portal ine con registro de procedencia y consulta de datastore."""
 from __future__ import annotations
 
 import hashlib

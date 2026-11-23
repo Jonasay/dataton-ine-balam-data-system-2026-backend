@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from src.core.config import RAW_DATA_DIR
 from src.ingestion.ine import (
     call_ckan,
     download_resource_file,
@@ -14,6 +15,7 @@ from src.ingestion.ine import (
     search_datasets,
     search_datastore
 )
+from src.process.process import _require_polars, read_excel_sheets
 from src.schemas.ine import DatastoreSearchBody, SqlQueryBody
 
 router = APIRouter(
@@ -80,6 +82,123 @@ def get_resources(slug: str):
         }
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"error al obtener recursos: {exc}")
+
+
+# previsualizar datos directamente por slug o recurso sin necesidad de descarga manual
+@router.get("/{slug}/vista-previa", summary="Previsualizar datos de un dataset directamente")
+@router.get("/{slug}/preview", summary="Previsualizar datos de un dataset (alias)", include_in_schema=False)
+@router.get("/{slug}/recursos/{resource_id}/vista-previa", summary="Previsualizar recurso especifico", include_in_schema=False)
+def preview_dataset_data(
+    slug: str,
+    recurso_id: Optional[str] = Query(default=None, description="Id del recurso especifico (opcional)"),
+    resource_id: Optional[str] = Query(default=None, description="Alias en ingles de recurso_id", include_in_schema=False),
+    hoja_id: int = Query(default=1, ge=0, description="Indice o numero de hoja de excel a previsualizar"),
+    limite: int = Query(default=10, ge=1, le=1000, description="Cantidad maxima de filas para vista previa"),
+):
+    """Previsualizar registros y estructura de un conjunto del ine sin requerir descarga manual previa ni rutas locales."""
+    try:
+        resources = get_dataset_resources(slug)
+        if not resources:
+            raise HTTPException(status_code=404, detail=f"no se encontraron recursos para el conjunto {slug}")
+
+        target_id = recurso_id or resource_id
+        target_resource = None
+        if target_id:
+            target_resource = next((r for r in resources if r.get("id") == target_id), None)
+            if not target_resource:
+                raise HTTPException(status_code=404, detail=f"recurso {target_id} no encontrado en {slug}")
+        else:
+            # seleccionar preferentemente un recurso tabular (xlsx, csv, xls)
+            tabular_formats = {"xlsx", "csv", "xls"}
+            target_resource = next(
+                (r for r in resources if str(r.get("formato", "")).lower() in tabular_formats),
+                resources[0]
+            )
+
+        active_id = target_resource["id"]
+
+        # intentar primero obtener registros indexados directamente del datastore ckan
+        try:
+            datastore_data = search_datastore(resource_id=active_id, limit=limite)
+            records = datastore_data.get("records", [])
+            if records:
+                fields = [f.get("id") for f in datastore_data.get("fields", [])]
+                return {
+                    "dataset": slug,
+                    "recurso_id": active_id,
+                    "nombre": target_resource.get("nombre"),
+                    "formato": target_resource.get("formato"),
+                    "origen": "datastore_ckan",
+                    "hojas": [],
+                    "hoja_actual": None,
+                    "columnas": fields,
+                    "filas_muestra": records,
+                    "total_filas_muestra": len(records)
+                }
+        except Exception:
+            # continuar con lectura de archivo si el recurso no esta indexado en datastore
+            pass
+
+        # descarga transparente si el archivo aun no esta en almacenamiento local
+        file_name = target_resource["url"].rsplit("/", 1)[-1]
+        local_path = RAW_DATA_DIR / slug / file_name
+        if not local_path.exists():
+            local_path = download_resource_file(target_resource)
+
+        # procesar y extraer vista previa segun la extension
+        file_ext = local_path.suffix.lower()
+        if file_ext in [".xlsx", ".xls"]:
+            # inspeccionar nombres de hojas
+            sheets_dict = read_excel_sheets(local_path, sheet_id=0)
+            sheet_names = list(sheets_dict.keys()) if isinstance(sheets_dict, dict) else []
+
+            # leer datos de la hoja solicitada
+            sheet_df = read_excel_sheets(local_path, sheet_id=hoja_id)
+            preview_rows = sheet_df.head(limite).to_dicts()
+            return {
+                "dataset": slug,
+                "recurso_id": active_id,
+                "nombre": target_resource.get("nombre"),
+                "formato": target_resource.get("formato", "xlsx"),
+                "origen": "archivo_local_autodescargado",
+                "archivo": local_path.name,
+                "hojas": sheet_names,
+                "hoja_actual": hoja_id,
+                "columnas": sheet_df.columns,
+                "filas_muestra": preview_rows,
+                "total_filas_muestra": len(preview_rows)
+            }
+        elif file_ext == ".csv":
+            pl = _require_polars()
+            df = pl.read_csv(str(local_path), n_rows=limite)
+            preview_rows = df.head(limite).to_dicts()
+            return {
+                "dataset": slug,
+                "recurso_id": active_id,
+                "nombre": target_resource.get("nombre"),
+                "formato": "csv",
+                "origen": "archivo_local_autodescargado",
+                "archivo": local_path.name,
+                "hojas": [],
+                "hoja_actual": None,
+                "columnas": df.columns,
+                "filas_muestra": preview_rows,
+                "total_filas_muestra": len(preview_rows)
+            }
+        else:
+            return {
+                "dataset": slug,
+                "recurso_id": active_id,
+                "nombre": target_resource.get("nombre"),
+                "formato": target_resource.get("formato"),
+                "origen": "archivo_descargado",
+                "archivo": local_path.name,
+                "mensaje": f"archivo descargado pero su formato {file_ext} no es tabular"
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"error al obtener vista previa: {exc}")
 
 
 # descargar recurso y guardarlo con procedencia en disco
