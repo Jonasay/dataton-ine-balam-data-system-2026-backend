@@ -202,9 +202,9 @@ def test_query_datastore_sql(mock_call):
     assert res["registros"] == [{"count": 120}]
 
 
-@patch("main.search_datasets")
+@patch("src.api.v1.endpoints.ine_router.search_datasets")
 def test_api_get_datasets(mock_search):
-    """Verificar endpoint fastapi /ine/conjuntos con limite por defecto de 10."""
+    """Verificar endpoint fastapi /api/v1/ine/conjuntos con limite por defecto de 10."""
     mock_search.return_value = {
         "total": 1,
         "inicio": 0,
@@ -212,50 +212,54 @@ def test_api_get_datasets(mock_search):
         "conjuntos": [{"id": "test-dataset", "nombre": "test"}]
     }
 
-    resp = client.get("/ine/conjuntos?consulta=2025")
+    resp = client.get("/api/v1/ine/conjuntos?consulta=2025")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 1
     assert data["filas"] == 10
     assert data["conjuntos"][0]["id"] == "test-dataset"
 
+    # probar tambien ruta directa /ine/conjuntos
+    resp_direct = client.get("/ine/conjuntos?consulta=2025")
+    assert resp_direct.status_code == 200
 
-@patch("main.list_all_datasets")
+
+@patch("src.api.v1.endpoints.ine_router.list_all_datasets")
 def test_api_get_all_datasets(mock_list):
-    """Verificar endpoint fastapi /ine/todos-los-conjuntos con limite por defecto de 10."""
+    """Verificar endpoint fastapi /api/v1/ine/todos-los-conjuntos con limite por defecto de 10."""
     mock_list.return_value = [{"id": "ds-1"}, {"id": "ds-2"}]
 
-    resp = client.get("/ine/todos-los-conjuntos")
+    resp = client.get("/api/v1/ine/todos-los-conjuntos")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total_recuperado"] == 2
     mock_list.assert_called_with(group=None, rows_per_page=10, max_total=10)
 
 
-@patch("main.list_groups")
+@patch("src.api.v1.endpoints.ine_router.list_groups")
 def test_api_get_groups(mock_groups):
-    """Verificar endpoint fastapi /ine/grupos."""
+    """Verificar endpoint fastapi /api/v1/ine/grupos."""
     mock_groups.return_value = [{"id": "g-1", "nombre": "demografia"}]
 
-    resp = client.get("/ine/grupos")
+    resp = client.get("/api/v1/ine/grupos")
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
 
 
-@patch("main.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
 def test_api_get_resources(mock_res):
-    """Verificar endpoint fastapi /ine/{slug}/recursos."""
+    """Verificar endpoint fastapi /api/v1/ine/{slug}/recursos."""
     mock_res.return_value = [{"id": "res-1", "nombre": "archivo.csv"}]
 
-    resp = client.get("/ine/censo-2025/recursos")
+    resp = client.get("/api/v1/ine/censo-2025/recursos")
     assert resp.status_code == 200
     data = resp.json()
     assert data["dataset"] == "censo-2025"
     assert len(data["recursos"]) == 1
 
 
-@patch("main.download_resource_file")
-@patch("main.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.download_resource_file")
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
 def test_api_download_resource(mock_res, mock_download, tmp_path):
     """Verificar endpoint de descarga y que no lanza error de indices de string."""
     fake_file = tmp_path / "censo.csv"
@@ -267,62 +271,62 @@ def test_api_download_resource(mock_res, mock_download, tmp_path):
     mock_download.return_value = fake_file
 
     # probar endpoint con metodo post y get
-    resp_post = client.post("/ine/censo-2025/descargar/res-ok")
+    resp_post = client.post("/api/v1/ine/censo-2025/descargar/res-ok")
     assert resp_post.status_code == 200
     assert resp_post.content == b"col1,col2\n1,2"
 
-    resp_get = client.get("/ine/censo-2025/descargar/res-ok")
+    resp_get = client.get("/api/v1/ine/censo-2025/descargar/res-ok")
     assert resp_get.status_code == 200
     assert resp_get.content == b"col1,col2\n1,2"
 
     # probar respuesta cuando el recurso no existe
-    resp_404 = client.get("/ine/censo-2025/descargar/recurso-inexistente")
+    resp_404 = client.get("/api/v1/ine/censo-2025/descargar/recurso-inexistente")
     assert resp_404.status_code == 404
 
 
-@patch("main.has_remote_changed")
-@patch("main.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.has_remote_changed")
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
 def test_api_check_remote_change(mock_res, mock_change):
     """Verificar endpoint fastapi para verificar cambios remotos."""
     mock_res.return_value = [{"id": "res-ok", "last_modified": "2025-01-01"}]
     mock_change.return_value = True
 
-    resp = client.get("/ine/censo-2025/verificar-cambio/res-ok")
+    resp = client.get("/api/v1/ine/censo-2025/verificar-cambio/res-ok")
     assert resp.status_code == 200
     data = resp.json()
     assert data["cambio_remoto"] is True
 
 
-@patch("main.search_datastore")
+@patch("src.api.v1.endpoints.ine_router.search_datastore")
 def test_api_datastore_endpoints(mock_ds):
     """Verificar endpoints de datastore tanto get como post con limite por defecto de 10."""
     mock_ds.return_value = {"total": 1, "registros": [{"item": 1}]}
 
     # prueba de endpoint mediante metodo get
-    resp_get = client.get("/ine/datastore/consulta?recurso_id=res-123")
+    resp_get = client.get("/api/v1/ine/datastore/consulta?recurso_id=res-123")
     assert resp_get.status_code == 200
     assert resp_get.json()["total"] == 1
     mock_ds.assert_called_with(resource_id="res-123", limit=10, offset=0, query=None)
 
     # prueba de endpoint mediante metodo post
     resp_post = client.post(
-        "/ine/datastore/consulta",
+        "/api/v1/ine/datastore/consulta",
         json={"recurso_id": "res-123", "limite": 10, "desplazamiento": 0}
     )
     assert resp_post.status_code == 200
     assert resp_post.json()["total"] == 1
 
 
-@patch("main.query_datastore_sql")
+@patch("src.api.v1.endpoints.ine_router.query_datastore_sql")
 def test_api_datastore_sql_endpoints(mock_sql):
     """Verificar endpoints de consulta sql tanto get como post."""
     mock_sql.return_value = {"registros": [{"resultado": "ok"}]}
 
-    resp_get = client.get('/ine/datastore/consulta-sql?sql=select * from "tabla"')
+    resp_get = client.get('/api/v1/ine/datastore/consulta-sql?sql=select * from "tabla"')
     assert resp_get.status_code == 200
 
     resp_post = client.post(
-        "/ine/datastore/consulta-sql",
+        "/api/v1/ine/datastore/consulta-sql",
         json={"sql": 'select * from "tabla"'}
     )
     assert resp_post.status_code == 200

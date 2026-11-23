@@ -3,22 +3,23 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from dotenv import load_dotenv
 import requests
 
-load_dotenv()
+from src.core.config import (
+    BASE_URL_INE,
+    DEFAULT_DOWNLOAD_TIMEOUT,
+    DEFAULT_HEADERS,
+    DEFAULT_REQUEST_TIMEOUT,
+    RAW_DATA_DIR,
+)
 
-# configuracion base cargada desde variables de entorno o valor predeterminado
-BASE_URL = os.getenv("BASE_PATH_INE", "https://datos.ine.gob.gt/api/3/action").rstrip("/")
-RAW_DATA_DIR = Path("data/raw")
-DEFAULT_USER_AGENT = "datathon-ine-2026 (equipo: balam-data-systems; contacto: dev@balam.gt)"
-DEFAULT_HEADERS = {"User-Agent": DEFAULT_USER_AGENT}
-DEFAULT_TIMEOUT = int(os.getenv("INE_REQUEST_TIMEOUT", "60"))
+# configuracion base importada del modulo core
+BASE_URL = BASE_URL_INE
+DEFAULT_TIMEOUT = DEFAULT_REQUEST_TIMEOUT
 
 
 def call_ckan(action: str, timeout: int = DEFAULT_TIMEOUT, **params: Any) -> Any:
@@ -157,7 +158,7 @@ def get_dataset_resources(slug: str) -> List[Dict[str, Any]]:
 def download_resource_file(
     resource: Dict[str, Any],
     base_dir: Path = RAW_DATA_DIR,
-    timeout: int = 300
+    timeout: int = DEFAULT_DOWNLOAD_TIMEOUT
 ) -> Path:
     """Descargar un recurso a disco y anotar procedencia en manifest.jsonl."""
     dataset_name = resource.get("dataset", "general")
