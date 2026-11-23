@@ -279,37 +279,40 @@ def build_guatemala_sidebar_html(
             """
 
         sidebar_html = f"""
-        <div id="gt-dashboard-panel" style="position:fixed; top:15px; right:15px; width:340px; max-height:calc(100vh - 30px); z-index:9999; background:rgba(255,255,255,0.96); backdrop-filter:blur(10px); border-radius:14px; box-shadow:0 12px 30px -5px rgba(0,0,0,0.2), 0 8px 10px -6px rgba(0,0,0,0.1); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; display:flex; flex-direction:column; overflow:hidden; border:1px solid #cbd5e1;">
-          <div style="padding:14px 16px; background:linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color:white;">
-            <div style="display:flex; align-items:center; gap:10px;">
-              <span style="font-size:24px;">🇬🇹</span>
+        <div id="gt-dashboard-panel" style="position:fixed; top:15px; right:15px; width:330px; max-height:calc(100vh - 30px); z-index:9999; background:rgba(255,255,255,0.97); backdrop-filter:blur(10px); border-radius:14px; box-shadow:0 12px 30px -5px rgba(0,0,0,0.2), 0 8px 10px -6px rgba(0,0,0,0.1); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; display:flex; flex-direction:column; overflow:hidden; border:1px solid #cbd5e1;">
+          <div style="padding:12px 14px; background:linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color:white; display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:22px;">🇬🇹</span>
               <div>
-                <h3 style="margin:0; font-size:15px; font-weight:800; letter-spacing:-0.2px;">Estadísticas de Guatemala</h3>
-                <p style="margin:2px 0 0 0; font-size:11px; opacity:0.85;">Instituto Nacional de Estadística (INE)</p>
+                <h3 style="margin:0; font-size:14px; font-weight:800; letter-spacing:-0.2px;">Estadísticas de Guatemala</h3>
+                <p style="margin:1px 0 0 0; font-size:10px; opacity:0.85;">Instituto Nacional de Estadística (INE)</p>
               </div>
             </div>
+            <button onclick="var c=document.getElementById('gt-panel-content'); var b=this; if(c.style.display==='none'){{c.style.display='flex'; b.innerText='—';}}else{{c.style.display='none'; b.innerText='+';}}" style="background:rgba(255,255,255,0.2); border:none; color:white; border-radius:6px; cursor:pointer; font-size:14px; font-weight:bold; width:26px; height:26px; display:flex; align-items:center; justify-content:center;">—</button>
           </div>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:12px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
-            <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
-              <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Total Nacional</div>
-              <div style="font-size:18px; font-weight:800; color:#0f172a; margin-top:2px;">{total_val:,}</div>
-            </div>
-            <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
-              <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Promedio Dpto</div>
-              <div style="font-size:18px; font-weight:800; color:#0f172a; margin-top:2px;">{avg_val:,}</div>
-            </div>
-            <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0; grid-column:span 2;">
-              <div style="display:flex; justify-content:space-between; font-size:11px;">
-                <span>🏆 <b>Mayor:</b> {max_row.get(name_col, '')} ({int(max_row[value_col]):,})</span>
-                <span style="color:#64748b;">📉 <b>Menor:</b> {min_row.get(name_col, '')} ({int(min_row[value_col]):,})</span>
+          <div id="gt-panel-content" style="display:flex; flex-direction:column; overflow:hidden;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+              <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
+                <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Total Nacional</div>
+                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{total_val:,}</div>
+              </div>
+              <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
+                <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Promedio Dpto</div>
+                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{avg_val:,}</div>
+              </div>
+              <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0; grid-column:span 2;">
+                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                  <span>🏆 <b>Mayor:</b> {max_row.get(name_col, '')} ({int(max_row[value_col]):,})</span>
+                  <span style="color:#64748b;">📉 <b>Menor:</b> {min_row.get(name_col, '')} ({int(min_row[value_col]):,})</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div style="padding:10px 14px 6px; font-size:11px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:0.5px;">
-            Desglose por Departamento
-          </div>
-          <div style="overflow-y:auto; flex:1; padding:0 12px 12px;">
-            {items_html}
+            <div style="padding:8px 12px 4px; font-size:10px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:0.5px;">
+              Desglose por Departamento
+            </div>
+            <div style="overflow-y:auto; max-height:calc(100vh - 220px); padding:0 10px 10px;">
+              {items_html}
+            </div>
           </div>
         </div>
         """
@@ -398,23 +401,41 @@ def create_plotly_choropleth(
     code_col: str = "cod",
     value_col: str = "valor",
     hover_name: str = "nombre",
-    center_lat: float = 15.65,
-    center_lon: float = -90.35,
-    zoom: float = 6.8,
-    map_style: str = "carto-positron",
+    center_lat: float = 15.78,
+    center_lon: float = -90.23,
+    zoom: float = 6.3,
+    map_style: str = "white-bg",
     color_scale: str = "Turbo",
-    pitch: int = 45,
-    bearing: int = -10
+    pitch: int = 40,
+    bearing: int = 0
 ) -> Any:
     """Construir mapa coropletico con plotly express con vista 3D y encuadre en Guatemala."""
     px = _require_plotly()
     hover_field = hover_name if hover_name in getattr(merged_gdf, "columns", []) else None
 
+    # normalizar features asegurando que tengan identificador explicito para vincular con las ubicaciones
+    geo_data = getattr(merged_gdf, "__geo_interface__", None)
+    if isinstance(geo_data, dict) and "features" in geo_data:
+        for feat in geo_data["features"]:
+            if isinstance(feat, dict):
+                props = feat.get("properties", {})
+                if code_col in props:
+                    feat["id"] = str(props[code_col])
+
+    # capa base de esri confiable sin problemas de bloqueo 403 o requerimientos de token de carto
+    esri_layer = {
+        "below": "traces",
+        "sourcetype": "raster",
+        "source": [
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+        ]
+    }
+
     # usar choropleth_map segun la version moderna de plotly o choropleth_mapbox como fallback
     if hasattr(px, "choropleth_map"):
         figure = px.choropleth_map(
             merged_gdf,
-            geojson=getattr(merged_gdf, "__geo_interface__", None),
+            geojson=geo_data,
             locations=code_col,
             featureidkey=f"properties.{code_col}",
             color=value_col,
@@ -425,13 +446,13 @@ def create_plotly_choropleth(
             map_style=map_style
         )
         try:
-            figure.update_layout(map=dict(pitch=pitch, bearing=bearing))
+            figure.update_layout(map=dict(pitch=pitch, bearing=bearing, layers=[esri_layer]))
         except Exception:
             pass
     else:
         figure = px.choropleth_mapbox(
             merged_gdf,
-            geojson=getattr(merged_gdf, "__geo_interface__", None),
+            geojson=geo_data,
             locations=code_col,
             featureidkey=f"properties.{code_col}",
             color=value_col,
@@ -442,13 +463,23 @@ def create_plotly_choropleth(
             mapbox_style=map_style
         )
         try:
-            figure.update_layout(mapbox=dict(pitch=pitch, bearing=bearing))
+            figure.update_layout(mapbox=dict(pitch=pitch, bearing=bearing, layers=[esri_layer]))
         except Exception:
             pass
 
-    # ajustar margenes reservando espacio a la derecha para el panel lateral de valores
+    # remarcar bordes de cada departamento con trazo oscuro nitido
+    try:
+        figure.update_traces(
+            marker_line_width=1.8,
+            marker_line_color="#0f172a",
+            marker_opacity=0.88
+        )
+    except Exception:
+        pass
+
+    # ajustar margenes para ocupar el espacio completo de visualizacion
     figure.update_layout(
-        margin={"r": 360, "t": 40, "l": 0, "b": 0},
+        margin={"r": 0, "t": 45, "l": 0, "b": 0},
         title={"text": f"🇬🇹 Estadísticas Oficiales de Guatemala (INE) - {value_col.capitalize()}", "x": 0.05, "y": 0.96}
     )
     return figure
