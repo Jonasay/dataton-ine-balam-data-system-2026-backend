@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.core.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from src.process.process import (
     aggregate_parquet,
+    build_guatemala_sidebar_html,
     create_plotly_choropleth,
     excel_to_parquet,
     export_folium_map,
@@ -148,10 +149,11 @@ def get_interactive_folium_map(
     columna_codigo_parquet: str = Query(default="cod", description="Columna codigo en parquet"),
     columna_valor: str = Query(default="valor", description="Columna cuantitativa a graficar"),
     columna_nombre: str = Query(default="nombre", description="Columna para tooltip del mapa"),
-    esquema_color: str = Query(default="Blues", description="Colores para coropleta (ej. Blues, Reds, Viridis)"),
+    esquema_color: str = Query(default="YlOrRd", description="Colores para coropleta (ej. YlOrRd, Turbo, Viridis, Blues)"),
     capa_base: str = Query(default="Esri.WorldGrayCanvas", description="Proveedor de mosaicos base (ej. Esri.WorldGrayCanvas, Esri.WorldStreetMap)"),
+    descargar: bool = Query(default=False, description="Descargar el archivo directamente con el nombre del parquet en lugar de solo visualizarlo"),
 ):
-    """Construir mapa interactivo con folium y retornarlo como pagina html visible en navegador."""
+    """Construir mapa interactivo con folium y retornarlo como pagina html con el nombre del parquet."""
     try:
         # cargar capa espacial y unir con datos analiticos de parquet
         geo_data = load_geodata(ruta_geo, target_crs=4326, code_col=columna_codigo_geo)
@@ -162,7 +164,10 @@ def get_interactive_folium_map(
             value_col=columna_valor
         )
 
-        output_file = PROCESSED_DATA_DIR / "mapa.html"
+        parquet_stem = Path(ruta_parquet).stem
+        map_filename = f"mapa_{parquet_stem}.html"
+        output_file = PROCESSED_DATA_DIR / map_filename
+
         saved_html = export_folium_map(
             merged_gdf=merged_gdf,
             output_html_path=output_file,
@@ -173,7 +178,11 @@ def get_interactive_folium_map(
         )
 
         html_content = saved_html.read_text(encoding="utf-8")
-        return HTMLResponse(content=html_content)
+        disposition = "attachment" if descargar else "inline"
+        headers = {
+            "Content-Disposition": f'{disposition}; filename="{map_filename}"'
+        }
+        return HTMLResponse(content=html_content, headers=headers)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar mapa folium: {exc}")
 
@@ -188,6 +197,7 @@ def get_plotly_choropleth_map(
     columna_valor: str = Query(default="valor", description="Columna cuantitativa a graficar"),
     columna_nombre: str = Query(default="nombre", description="Columna para hover"),
     formato: str = Query(default="html", description="Formato de respuesta: html para visor web o json para react/streamlit"),
+    descargar: bool = Query(default=False, description="Descargar el archivo html con el nombre del parquet en lugar de solo visualizarlo"),
 ):
     """Construir mapa coropletico en plotly express devolviendo html interactivo o estructura json."""
     try:
@@ -202,15 +212,34 @@ def get_plotly_choropleth_map(
 
         fig = create_plotly_choropleth(
             merged_gdf=merged_gdf,
-            code_col=columna_codigo_parquet,
+            code_col="cod",
             value_col=columna_valor,
             hover_name=columna_nombre
         )
 
+        parquet_stem = Path(ruta_parquet).stem
+        map_filename = f"mapa_plotly_{parquet_stem}.html"
+        output_file = PROCESSED_DATA_DIR / map_filename
+
         if formato.lower() == "html":
             html_markup = fig.to_html(include_plotlyjs="cdn")
-            return HTMLResponse(content=html_markup)
+            sidebar_markup = build_guatemala_sidebar_html(merged_gdf, value_col=columna_valor, name_col=columna_nombre)
+            if sidebar_markup:
+                if "</body>" in html_markup:
+                    html_markup = html_markup.replace("</body>", f"{sidebar_markup}</body>")
+                else:
+                    html_markup += sidebar_markup
 
-        return JSONResponse(content=fig.to_dict())
+            output_file.write_text(html_markup, encoding="utf-8")
+            disposition = "attachment" if descargar else "inline"
+            headers = {
+                "Content-Disposition": f'{disposition}; filename="{map_filename}"'
+            }
+            return HTMLResponse(content=html_markup, headers=headers)
+
+        return JSONResponse(content={
+            **fig.to_dict(),
+            "archivo_generado": map_filename
+        })
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar mapa plotly: {exc}")

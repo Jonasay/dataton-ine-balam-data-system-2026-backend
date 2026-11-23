@@ -87,21 +87,24 @@ def get_resources(slug: str):
 # previsualizar datos directamente por slug o recurso sin necesidad de descarga manual
 @router.get("/{slug}/vista-previa", summary="Previsualizar datos de un dataset directamente")
 @router.get("/{slug}/preview", summary="Previsualizar datos de un dataset (alias)", include_in_schema=False)
-@router.get("/{slug}/recursos/{resource_id}/vista-previa", summary="Previsualizar recurso especifico", include_in_schema=False)
 def preview_dataset_data(
     slug: str,
     recurso_id: Optional[str] = Query(default=None, description="Id del recurso especifico (opcional)"),
-    resource_id: Optional[str] = Query(default=None, description="Alias en ingles de recurso_id", include_in_schema=False),
     hoja_id: int = Query(default=1, ge=0, description="Indice o numero de hoja de excel a previsualizar"),
     limite: int = Query(default=10, ge=1, le=1000, description="Cantidad maxima de filas para vista previa"),
 ):
     """Previsualizar registros y estructura de un conjunto del ine sin requerir descarga manual previa ni rutas locales."""
     try:
+        # normalizar parametros si se invoca internamente como funcion directa de python
+        from fastapi.params import Query as QueryParam
+        target_id = None if isinstance(recurso_id, QueryParam) else recurso_id
+        active_hoja = 1 if isinstance(hoja_id, QueryParam) else hoja_id
+        active_limite = 10 if isinstance(limite, QueryParam) else limite
+
         resources = get_dataset_resources(slug)
         if not resources:
             raise HTTPException(status_code=404, detail=f"no se encontraron recursos para el conjunto {slug}")
 
-        target_id = recurso_id or resource_id
         target_resource = None
         if target_id:
             target_resource = next((r for r in resources if r.get("id") == target_id), None)
@@ -119,7 +122,7 @@ def preview_dataset_data(
 
         # intentar primero obtener registros indexados directamente del datastore ckan
         try:
-            datastore_data = search_datastore(resource_id=active_id, limit=limite)
+            datastore_data = search_datastore(resource_id=active_id, limit=active_limite)
             records = datastore_data.get("records", [])
             if records:
                 fields = [f.get("id") for f in datastore_data.get("fields", [])]
@@ -153,8 +156,8 @@ def preview_dataset_data(
             sheet_names = list(sheets_dict.keys()) if isinstance(sheets_dict, dict) else []
 
             # leer datos de la hoja solicitada
-            sheet_df = read_excel_sheets(local_path, sheet_id=hoja_id)
-            preview_rows = sheet_df.head(limite).to_dicts()
+            sheet_df = read_excel_sheets(local_path, sheet_id=active_hoja)
+            preview_rows = sheet_df.head(active_limite).to_dicts()
             return {
                 "dataset": slug,
                 "recurso_id": active_id,
@@ -163,15 +166,15 @@ def preview_dataset_data(
                 "origen": "archivo_local_autodescargado",
                 "archivo": local_path.name,
                 "hojas": sheet_names,
-                "hoja_actual": hoja_id,
+                "hoja_actual": active_hoja,
                 "columnas": sheet_df.columns,
                 "filas_muestra": preview_rows,
                 "total_filas_muestra": len(preview_rows)
             }
         elif file_ext == ".csv":
             pl = _require_polars()
-            df = pl.read_csv(str(local_path), n_rows=limite)
-            preview_rows = df.head(limite).to_dicts()
+            df = pl.read_csv(str(local_path), n_rows=active_limite)
+            preview_rows = df.head(active_limite).to_dicts()
             return {
                 "dataset": slug,
                 "recurso_id": active_id,
@@ -199,6 +202,18 @@ def preview_dataset_data(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"error al obtener vista previa: {exc}")
+
+
+# previsualizar recurso especifico por id en la ruta
+@router.get("/{slug}/recursos/{resource_id}/vista-previa", summary="Previsualizar recurso especifico", include_in_schema=False)
+def preview_resource_data(
+    slug: str,
+    resource_id: str,
+    hoja_id: int = Query(default=1, ge=0, description="Indice o numero de hoja de excel a previsualizar"),
+    limite: int = Query(default=10, ge=1, le=1000, description="Cantidad maxima de filas para vista previa"),
+):
+    """Previsualizar un recurso determinado por su identificador unico."""
+    return preview_dataset_data(slug=slug, recurso_id=resource_id, hoja_id=hoja_id, limite=limite)
 
 
 # descargar recurso y guardarlo con procedencia en disco
