@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import shutil
 import unicodedata
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
@@ -298,8 +301,58 @@ def get_department_region(value: Union[str, int]) -> Optional[int]:
 
 
 def get_all_departments() -> List[Dict[str, Any]]:
-    """devolver lista completa ordenada de los 22 departamentos."""
+    # devolver lista completa ordenada de los 22 departamentos
     return [DEPARTAMENTOS_INE[k] for k in sorted(DEPARTAMENTOS_INE.keys())]
+
+
+def ensure_guatemala_geojson(target_path: Optional[Path] = None) -> Path:
+    # asegurar disponibilidad local de limites departamentales en formato geojson
+    if target_path is None:
+        try:
+            from src.core.config import RAW_DATA_DIR
+            base_raw = RAW_DATA_DIR
+        except Exception:
+            base_raw = Path("data/raw")
+        geo_file = base_raw / "geo" / "departamentos_gt.geojson"
+    else:
+        geo_file = Path(target_path)
+
+    if geo_file.exists() and geo_file.stat().st_size > 0:
+        return geo_file
+
+    geo_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # intentar recuperar desde respaldo local en papelera si existe
+    trash_candidate = Path.home() / ".local" / "share" / "Trash" / "files" / "data" / "raw" / "geo" / "departamentos_gt.geojson"
+    if trash_candidate.exists() and trash_candidate.stat().st_size > 0:
+        shutil.copy2(trash_candidate, geo_file)
+        return geo_file
+
+    # descargar desde fuente abierta oficial geoboundaries y normalizar codigos ine
+    import requests
+    url = (
+        "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/"
+        "main/releaseData/gbOpen/GTM/ADM1/"
+        "geoBoundaries-GTM-ADM1.geojson"
+    )
+    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=90)
+    resp.raise_for_status()
+    data = resp.json()
+
+    for feat in data.get("features", []):
+        props = feat.get("properties", {})
+        raw_name = props.get("shapeName") or props.get("nombre") or ""
+        norm = normalize_department(raw_name)
+        if norm:
+            props["COD_COLUMNA"] = norm["codigo_str"]
+            props["cod"] = norm["codigo_str"]
+            props["nombre"] = norm["nombre"]
+            props["iso"] = norm["iso"]
+            props["region_id"] = norm["region_id"]
+            props["region_nombre"] = norm["region_nombre"]
+
+    geo_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return geo_file
 
 
 # alias compatibles

@@ -186,6 +186,11 @@ def ensure_raw_datasets():
             if not success:
                 print(f"advertencia: no se pudo descargar {item['name']}")
 
+    # asegurar capa geografica departamental para mapas 2d y relieve 3d
+    from src.core.geo_master import ensure_guatemala_geojson
+    geo_file = ensure_guatemala_geojson(root_dir / "data" / "raw" / "geo" / "departamentos_gt.geojson")
+    print(f"  ✓ capa geografica disponible en: {geo_file}")
+
 
 def run_pipeline(year: int = 2024):
     start_time = time.time()

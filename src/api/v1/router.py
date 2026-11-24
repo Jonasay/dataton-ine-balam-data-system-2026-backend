@@ -6,6 +6,7 @@ from src.api.v1.endpoints import (
     process_router,
     indicators_router,
     analytics_router,
+    visualizations_router,
 )
 
 # enrutador version 1 con prefijo para modularizar servicios
@@ -14,3 +15,4 @@ api_router.include_router(ine_router.router)
 api_router.include_router(process_router.router)
 api_router.include_router(indicators_router.router)
 api_router.include_router(analytics_router.router)
+api_router.include_router(visualizations_router.router)

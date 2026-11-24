@@ -176,68 +176,18 @@ def get_demographic_forecasts():
 # indice exploratorio de vulnerabilidad socioeconomica territorial ivst
 @router.get("/vulnerabilidad", response_model=VulnerabilityResponse, summary="Índice de Vulnerabilidad Socioeconómica Territorial (IVST)")
 def get_territorial_vulnerability_index():
-    ind_path = DATA_PROCESSED / "indicadores" / "indicadores_consolidados_departamentales_2024.parquet"
-    clust_path = ANALYSIS_DIR / "clusters_departamentales.parquet"
-    if not ind_path.exists():
-        raise HTTPException(status_code=503, detail="indicadores base no disponibles")
+    from src.analysis.data_science import compute_territorial_vulnerability_df
 
-    df = pl.read_parquet(ind_path).to_pandas()
-    c_df = pl.read_parquet(clust_path).to_pandas() if clust_path.exists() else None
+    vuln_path = ANALYSIS_DIR / "vulnerabilidad_departamental.parquet"
+    if vuln_path.exists():
+        vuln_df = pl.read_parquet(vuln_path)
+    else:
+        ind_path = DATA_PROCESSED / "indicadores" / "indicadores_consolidados_departamentales_2024.parquet"
+        if not ind_path.exists():
+            raise HTTPException(status_code=503, detail="indicadores base no disponibles")
+        vuln_df = compute_territorial_vulnerability_df()
 
-    # normalizacion min-max para sintetizar el indice ivst
-    # indicadores de riesgo directo: dependencia demografica (+), inflacion (+), retorno migratorio (+)
-    # indicador de resiliencia inversa: matricula universitaria (-)
-    
-    def min_max(series):
-        s_min, s_max = series.min(), series.max()
-        return (series - s_min) / (s_max - s_min) if s_max > s_min else series * 0
-
-    norm_dep = min_max(df["razon_dependencia_demografica"])
-    norm_mig = min_max(df["tasa_retorno_migratorio_por_10k"])
-    norm_inf = min_max(df["inflacion_regional_interanual"])
-    norm_edu_deficit = 1.0 - min_max(df["tasa_matricula_superior_por_10k"])
-
-    # ponderacion equilibrada multidimensional
-    ivst_raw = (0.30 * norm_dep + 0.30 * norm_mig + 0.25 * norm_edu_deficit + 0.15 * norm_inf) * 100.0
-    df["ivst"] = np.round(ivst_raw, 2)
-
-    # clasificacion por niveles
-    def classify_vuln(score):
-        if score >= 65.0:
-            return "Crítica"
-        elif score >= 50.0:
-            return "Alta"
-        elif score >= 35.0:
-            return "Moderada"
-        else:
-            return "Baja"
-
-    df["nivel_vulnerabilidad"] = [classify_vuln(s) for s in df["ivst"]]
-    df = df.sort_values("ivst", ascending=False).reset_index(drop=True)
-    df["ranking"] = df.index + 1
-
-    records = []
-    for _, row in df.iterrows():
-        c_name = "No clasificado"
-        if c_df is not None:
-            match = c_df[c_df["depto_codigo"] == row["depto_codigo"]]
-            if len(match) > 0:
-                c_name = match["cluster_nombre"].values[0]
-
-        records.append({
-            "ranking": int(row["ranking"]),
-            "depto_codigo": int(row["depto_codigo"]),
-            "depto_nombre": str(row["depto_nombre"]),
-            "region_nombre": str(row["region_nombre"]),
-            "indice_vulnerabilidad_ivst": float(row["ivst"]),
-            "nivel_vulnerabilidad": str(row["nivel_vulnerabilidad"]),
-            "cluster_nombre": c_name,
-            "tasa_retorno_migratorio_por_10k": float(row["tasa_retorno_migratorio_por_10k"]),
-            "razon_dependencia_demografica": float(row["razon_dependencia_demografica"]),
-            "tasa_matricula_superior_por_10k": float(row["tasa_matricula_superior_por_10k"]),
-            "inflacion_regional_interanual": float(row["inflacion_regional_interanual"]),
-        })
-
+    records = vuln_df.to_dicts()
     return VulnerabilityResponse(
         total_departamentos=len(records),
         metodo="Sintesis normalizada Min-Max de sobrecarga demografica, deficit universitario, inflacion y retorno migratorio",

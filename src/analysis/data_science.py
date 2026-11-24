@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 import json
 import numpy as np
 import pandas as pd
@@ -358,6 +358,110 @@ def forecast_demographic_trends() -> pl.DataFrame:
     return df_demo_growth
 
 
+def compute_yearly_demographic_trajectory() -> pl.DataFrame:
+    # calcular evolucion anual de estructura demografica y dependencia 2015-2030
+    granular_path = DATA_PROCESSED / "demografia" / "poblacion_proyectada_edad_sexo.parquet"
+    if not granular_path.exists():
+        return pl.DataFrame()
+
+    df_granular = pl.read_parquet(granular_path)
+    sex_pivot = (
+        df_granular.filter(pl.col("sexo_id").is_in([1, 2]))
+        .group_by(["anio", "depto_codigo", "depto_nombre", "region_nombre", "sexo_id"])
+        .agg(pl.col("poblacion").sum())
+        .pivot(on="sexo_id", index=["anio", "depto_codigo", "depto_nombre", "region_nombre"], values="poblacion")
+        .rename({"1": "hombres", "2": "mujeres"})
+        .with_columns((pl.col("hombres") / pl.col("mujeres") * 100.0).round(2).alias("indice_masculinidad"))
+    )
+
+    age_groups = (
+        df_granular.filter(pl.col("sexo_id") == 0)
+        .group_by(["anio", "depto_codigo"])
+        .agg([
+            pl.col("poblacion").sum().alias("poblacion_total"),
+            pl.col("poblacion").filter(pl.col("edad") < 15).sum().alias("pob_menor_15"),
+            pl.col("poblacion").filter((pl.col("edad") >= 15) & (pl.col("edad") < 65)).sum().alias("pob_15_64"),
+            pl.col("poblacion").filter(pl.col("edad") >= 65).sum().alias("pob_65_mas"),
+        ])
+        .with_columns([
+            ((pl.col("pob_menor_15") + pl.col("pob_65_mas")) / pl.col("pob_15_64") * 100.0).round(2).alias("razon_dependencia_demografica"),
+            (pl.col("pob_menor_15") / pl.col("poblacion_total") * 100.0).round(2).alias("pct_poblacion_menor_15"),
+            (pl.col("pob_15_64") / pl.col("poblacion_total") * 100.0).round(2).alias("pct_poblacion_15_64"),
+            (pl.col("pob_65_mas") / pl.col("poblacion_total") * 100.0).round(2).alias("pct_poblacion_65_mas"),
+        ])
+    )
+
+    traj_df = sex_pivot.join(age_groups, on=["anio", "depto_codigo"]).sort(["anio", "depto_codigo"])
+    traj_df.write_parquet(ANALYSIS_DIR / "trayectoria_demografica_anual.parquet")
+    return traj_df
+
+
+def compute_territorial_vulnerability_df(df_indicators: Optional[pl.DataFrame] = None) -> pl.DataFrame:
+    # calcular indice de vulnerabilidad socioeconomica territorial ivst normalizado min-max
+    if df_indicators is None:
+        if not INDICATORS_PATH.exists():
+            raise FileNotFoundError(f"no se encontro el dataset consolidado en: {INDICATORS_PATH}")
+        df_indicators = pl.read_parquet(INDICATORS_PATH)
+
+    pdf = df_indicators.to_pandas().copy()
+    clust_path = ANALYSIS_DIR / "clusters_departamentales.parquet"
+    c_df = pl.read_parquet(clust_path).to_pandas() if clust_path.exists() else None
+
+    def min_max_norm(series: pd.Series) -> pd.Series:
+        s_min, s_max = series.min(), series.max()
+        return (series - s_min) / (s_max - s_min) if s_max > s_min else series * 0.0
+
+    norm_dep = min_max_norm(pdf["razon_dependencia_demografica"])
+    norm_mig = min_max_norm(pdf["tasa_retorno_migratorio_por_10k"])
+    norm_inf = min_max_norm(pdf["inflacion_regional_interanual"])
+    norm_edu_deficit = 1.0 - min_max_norm(pdf["tasa_matricula_superior_por_10k"])
+
+    # ponderacion multidimensional equilibrada
+    ivst_raw = (0.30 * norm_dep + 0.30 * norm_mig + 0.25 * norm_edu_deficit + 0.15 * norm_inf) * 100.0
+    pdf["indice_vulnerabilidad_ivst"] = np.round(ivst_raw, 2)
+
+    def classify_level(score: float) -> str:
+        if score >= 65.0:
+            return "Crítica"
+        elif score >= 50.0:
+            return "Alta"
+        elif score >= 35.0:
+            return "Moderada"
+        return "Baja"
+
+    pdf["nivel_vulnerabilidad"] = [classify_level(float(s)) for s in pdf["indice_vulnerabilidad_ivst"]]
+    pdf = pdf.sort_values("indice_vulnerabilidad_ivst", ascending=False).reset_index(drop=True)
+    pdf["ranking"] = pdf.index + 1
+
+    cluster_names = []
+    for _, row in pdf.iterrows():
+        c_name = "No clasificado"
+        if c_df is not None:
+            match = c_df[c_df["depto_codigo"] == row["depto_codigo"]]
+            if len(match) > 0:
+                c_name = str(match["cluster_nombre"].values[0])
+        cluster_names.append(c_name)
+    pdf["cluster_nombre"] = cluster_names
+
+    out_cols = [
+        "ranking",
+        "depto_codigo",
+        "depto_nombre",
+        "depto_iso",
+        "region_nombre",
+        "indice_vulnerabilidad_ivst",
+        "nivel_vulnerabilidad",
+        "cluster_nombre",
+        "tasa_retorno_migratorio_por_10k",
+        "razon_dependencia_demografica",
+        "tasa_matricula_superior_por_10k",
+        "inflacion_regional_interanual",
+    ]
+    vuln_df = pl.DataFrame(pdf[out_cols])
+    vuln_df.write_parquet(ANALYSIS_DIR / "vulnerabilidad_departamental.parquet")
+    return vuln_df
+
+
 def run_full_data_science_pipeline() -> Dict[str, Any]:
     # ejecucion integral del pipeline cientifico y estadistico
     if not INDICATORS_PATH.exists():
@@ -375,9 +479,11 @@ def run_full_data_science_pipeline() -> Dict[str, Any]:
     # 3. pca y agrupamiento
     clusters_df, cluster_meta = perform_pca_and_clustering(df_indicators, n_clusters=4)
     
-    # 4. modelos predictivos y proyecciones
+    # 4. modelos predictivos, trayectoria anual y vulnerabilidad ivst
     cba_forecast = forecast_cost_of_living()
     demo_forecast = forecast_demographic_trends()
+    compute_yearly_demographic_trajectory()
+    vuln_df = compute_territorial_vulnerability_df(df_indicators)
     
     # 5. consolidacion de resumen
     summary_report = {
@@ -390,6 +496,7 @@ def run_full_data_science_pipeline() -> Dict[str, Any]:
         "clusters_meta": cluster_meta["clusters"],
         "proyecciones_costo_vida": cba_forecast.to_dicts(),
         "top_crecimiento_demografico": demo_forecast.head(5).to_dicts(),
+        "top_vulnerabilidad_ivst": vuln_df.head(5).to_dicts(),
     }
     
     with open(ANALYSIS_DIR / "resumen_ciencia_datos.json", "w", encoding="utf-8") as handle:

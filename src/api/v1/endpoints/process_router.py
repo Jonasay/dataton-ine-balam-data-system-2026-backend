@@ -147,7 +147,7 @@ def post_parquet_summary(body: ParquetAggregateRequest):
 # generar y visualizar mapa interactivo en html con folium
 @router.get("/mapa-html", summary="Generar y visualizar mapa interactivo folium", response_class=HTMLResponse)
 def get_interactive_folium_map(
-    ruta_geo: str = Query(..., description="Ruta del archivo shapefile o geojson dentro de data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del archivo shapefile o geojson dentro de data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del archivo parquet dentro de data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA", description="Columna codigo en capa espacial"),
     columna_codigo_parquet: str = Query(default="cod", description="Columna codigo en parquet"),
@@ -197,7 +197,7 @@ def get_interactive_folium_map(
 # generar mapa coropletico con plotly para paneles web o streamlit
 @router.get("/mapa-plotly", summary="Generar mapa coropletico con plotly")
 def get_plotly_choropleth_map(
-    ruta_geo: str = Query(..., description="Ruta del archivo shapefile o geojson dentro de data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del archivo shapefile o geojson dentro de data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del archivo parquet dentro de data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA", description="Columna codigo en capa espacial"),
     columna_codigo_parquet: str = Query(default="cod", description="Columna codigo en parquet"),
@@ -264,7 +264,7 @@ def get_plotly_choropleth_map(
 # mapa 3d iteractivo con deck.gl
 @router.get("/mapa-3d-relieve", summary="Mapa 3D interactivo con relieve segun datos", response_class=HTMLResponse)
 def get_3d_relief_map(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),
@@ -304,7 +304,7 @@ def get_3d_relief_map(
 # modelo 3d imprimible (stl o glb con camara incluida)
 @router.get("/modelo-3d-impresion", summary="Generar modelo 3D imprimible o para Blender")
 def get_printable_3d_model(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),
@@ -378,7 +378,7 @@ def get_printable_3d_model(
 # render 3d hiperrealista con blender
 @router.get("/render-3d-blender", summary="Renderizar modelo 3D con Blender headless a imagen PNG")
 def get_blender_3d_render(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),

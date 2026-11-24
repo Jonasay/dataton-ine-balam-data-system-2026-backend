@@ -17,6 +17,7 @@ from src.analysis.data_science import (
     forecast_cost_of_living,
     forecast_demographic_trends,
 )
+from src.analysis.visualizations import prebuild_all_visualizations
 import polars as pl
 
 
@@ -63,6 +64,15 @@ def run_analysis_pipeline() -> None:
             "dominio", "costo_actual_percapita", "tendencia_mensual_gtq",
             "proyeccion_tasa_anual_pct", "proyeccion_12_meses_gtq", "coeficiente_determinacion_r2"
         ]))
+
+    # pregenerar todas las visualizaciones interactivas, mapas y renders blender
+    print("\n" + "=" * 70)
+    print("pregenerando cache de graficas 2d/3d, mapas y modelos blender...")
+    print("=" * 70)
+    vis_summary = prebuild_all_visualizations(include_blender=True, force_refresh=False)
+    print(f"  ✓ graficas en cache   : {vis_summary['graficas_en_cache']} archivos listos")
+    print(f"  ✓ mapas generados     : {vis_summary['mapas_generados']} mapas 2d/3d")
+    print(f"  ✓ renders blender     : {vis_summary['renders_blender_generados']} imagenes png")
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 70)

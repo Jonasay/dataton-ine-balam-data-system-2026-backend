@@ -56,6 +56,14 @@ def _require_trimesh() -> Any:
         ) from exc
 
 
+def _format_3d_metric(val: Any) -> str:
+    # formatear valores decimales o enteros para tarjetas y ranking 3d
+    num = float(val or 0.0)
+    if abs(num - round(num)) < 1e-6:
+        return f"{int(round(num)):,}"
+    return f"{num:,.2f}"
+
+
 def build_deckgl_3d_relief_html(
     merged_gdf: Any,
     value_col: str = "valor",
@@ -87,37 +95,55 @@ def build_deckgl_3d_relief_html(
     # calcular elevacion, normalizacion y colores especificos para cada departamento
     for feat in geo_data.get("features", []):
         props = feat.get("properties", {})
-        code = str(props.get(code_col, "")).zfill(2)
+        raw_code = props.get(code_col) if props.get(code_col) is not None else props.get("cod", "")
+        code = str(raw_code).zfill(2)
         val = float(props.get(value_col) or 0.0)
         props["elevation_m"] = (val / max_val) * float(max_elevation_m)
         props["norm"] = val / max_val
-        props["nombre_tooltip"] = props.get(name_col, "Dpto")
-        props["valor_tooltip"] = val
+        props["nombre_tooltip"] = props.get(name_col) or props.get("nombre") or props.get("depto_nombre") or "Dpto"
+        props["valor_tooltip"] = round(val, 2) if abs(val - round(val)) >= 1e-6 else int(round(val))
         props["color_rgb"] = list(DEPT_COLORS_RGB.get(code, (56, 189, 248)))
         props["color_hex"] = DEPT_COLORS_HEX.get(code, "#38bdf8")
 
     geo_json_str = json.dumps(geo_data).replace("</", "<\\/")
     display_title = topic_title or f"Datos de {value_col.capitalize()}"
 
-    # ordenar datos para el ranking lateral
+    # ordenar datos para el ranking lateral preservando tasas decimales
     sorted_df = merged_gdf.sort_values(by=value_col, ascending=False) if hasattr(merged_gdf, "sort_values") else merged_gdf
-    total_val = int(merged_gdf[value_col].sum()) if hasattr(merged_gdf, "__getitem__") else 0
-    avg_val = int(merged_gdf[value_col].mean()) if hasattr(merged_gdf, "__getitem__") else 0
+    is_rate_metric = any(
+        value_col.startswith(pref)
+        for pref in ["tasa_", "pct_", "indice_", "razon_", "inflacion_", "brecha_", "perdida_"]
+    )
+    if hasattr(merged_gdf, "__getitem__"):
+        vals_series = merged_gdf[value_col].astype(float)
+        primary_label = "Mediana Nacional" if is_rate_metric else "Total Nacional"
+        primary_fmt = _format_3d_metric(vals_series.median() if is_rate_metric else vals_series.sum())
+        avg_fmt = _format_3d_metric(vals_series.mean())
+    else:
+        primary_label = "Total Nacional"
+        primary_fmt = "0"
+        avg_fmt = "0"
+
     max_row = sorted_df.iloc[0] if len(sorted_df) > 0 else {}
     min_row = sorted_df.iloc[-1] if len(sorted_df) > 0 else {}
+    max_fmt = _format_3d_metric(max_row.get(value_col, 0))
+    min_fmt = _format_3d_metric(min_row.get(value_col, 0))
 
     items_html = ""
     for idx, (_, row) in enumerate(sorted_df.iterrows(), start=1):
-        pct = (float(row.get(value_col, 0)) / max_val) * 100
-        val_f = f"{int(row.get(value_col, 0)):,}"
-        c_code = str(row.get(code_col, "")).zfill(2)
+        row_v = float(row.get(value_col, 0) or 0.0)
+        pct = (row_v / max_val) * 100
+        val_f = _format_3d_metric(row_v)
+        raw_c_code = row.get(code_col) if row.get(code_col) is not None else row.get("cod", "")
+        c_code = str(raw_c_code).zfill(2)
         c_hex = DEPT_COLORS_HEX.get(c_code, "#38bdf8")
+        row_name = row.get(name_col) or row.get("nombre") or row.get("depto_nombre") or "Dpto"
         items_html += f"""
         <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid #1e293b; font-size:12px;">
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:6px;">
               <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:{c_hex}; flex-shrink:0;"></span>
-              <span style="font-weight:600; color:#f8fafc;">#{idx} {row.get(name_col, 'Dpto')}</span>
+              <span style="font-weight:600; color:#f8fafc;">#{idx} {row_name}</span>
             </div>
             <div style="background:#334155; border-radius:3px; height:4px; width:100%; margin-top:4px; overflow:hidden;">
               <div style="background:linear-gradient(90deg, {c_hex}, #ef4444); height:100%; width:{pct:.1f}%;"></div>
@@ -252,20 +278,19 @@ def build_deckgl_3d_relief_html(
       </div>
     </div>
 
-    <!-- kpis nacionales -->
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px; background:#0f172a; border-bottom:1px solid #1e293b;">
       <div class="kpi-box">
-        <div style="font-size:10px; color:#94a3b8; font-weight:700; text-transform:uppercase;">Total Nacional</div>
-        <div style="font-size:17px; font-weight:800; color:#38bdf8; margin-top:2px;">{total_val:,}</div>
+        <div style="font-size:10px; color:#94a3b8; font-weight:700; text-transform:uppercase;">{primary_label}</div>
+        <div style="font-size:17px; font-weight:800; color:#38bdf8; margin-top:2px;">{primary_fmt}</div>
       </div>
       <div class="kpi-box">
         <div style="font-size:10px; color:#94a3b8; font-weight:700; text-transform:uppercase;">Promedio Dpto</div>
-        <div style="font-size:17px; font-weight:800; color:#38bdf8; margin-top:2px;">{avg_val:,}</div>
+        <div style="font-size:17px; font-weight:800; color:#38bdf8; margin-top:2px;">{avg_fmt}</div>
       </div>
       <div class="kpi-box" style="grid-column:span 2; font-size:11px;">
         <div style="display:flex; justify-content:space-between;">
-          <span>🏆 <b>Mayor:</b> {max_row.get(name_col, '')} ({int(max_row.get(value_col, 0)):,})</span>
-          <span style="color:#94a3b8;">📉 <b>Menor:</b> {min_row.get(name_col, '')} ({int(min_row.get(value_col, 0)):,})</span>
+          <span>🏆 <b>Mayor:</b> {max_row.get(name_col) or max_row.get('nombre', '')} ({max_fmt})</span>
+          <span style="color:#94a3b8;">📉 <b>Menor:</b> {min_row.get(name_col) or min_row.get('nombre', '')} ({min_fmt})</span>
         </div>
       </div>
     </div>
@@ -493,11 +518,16 @@ def build_guatemala_relief_scene(
     scene = trimesh.Scene()
 
     for idx, row in gdf_proj.iterrows():
-        val = float(row.get(value_col, 0))
+        val = float(row.get(value_col, 0) or 0.0)
         relief = max(min_relief_mm, (val / max_val) * max_relief_mm)
         geom = row.geometry
-        code = str(row.get(code_col, f"{idx+1}")).zfill(2)
-        raw_name = str(row.get(name_col, f"Dpto_{code}")).replace(" ", "_")
+        raw_code = row.get(code_col)
+        if raw_code is None:
+            raw_code = row.get("cod")
+        if raw_code is None:
+            raw_code = f"{idx+1}"
+        code = str(raw_code).zfill(2)
+        raw_name = str(row.get(name_col) or row.get("nombre") or f"Dpto_{code}").replace(" ", "_")
         name_clean = "".join(c for c in raw_name if c.isalnum() or c in ["_", "-"])
 
         # determinar material pbr segun estilo
