@@ -123,9 +123,10 @@ def preview_dataset_data(
         # intentar primero obtener registros indexados directamente del datastore ckan
         try:
             datastore_data = search_datastore(resource_id=active_id, limit=active_limite)
-            records = datastore_data.get("records", [])
+            records = datastore_data.get("registros") or datastore_data.get("records", [])
             if records:
-                fields = [f.get("id") for f in datastore_data.get("fields", [])]
+                raw_fields = datastore_data.get("campos") or datastore_data.get("fields", [])
+                fields = [f.get("id") for f in raw_fields]
                 return {
                     "dataset": slug,
                     "recurso_id": active_id,
