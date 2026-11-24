@@ -243,7 +243,7 @@ def test_api_get_resources(mock_res):
 def test_api_download_resource(mock_res, mock_download, tmp_path):
     """Verificar endpoint de descarga y que no lanza error de indices de string."""
     fake_file = tmp_path / "censo.csv"
-    fake_file.write_text("col1,col2\n1,2")
+    fake_file.write_bytes(b"col1,col2\n1,2")
 
     mock_res.return_value = [
         {"id": "res-ok", "nombre": "censo.csv", "dataset": "censo-2025", "url": "https://example.com/censo.csv"}
@@ -361,3 +361,41 @@ def test_api_preview_dataset_autodownload(mock_read, mock_dl, mock_ds, mock_res,
     assert data["origen"] == "archivo_local_autodescargado"
     assert data["columnas"] == ["departamento", "accidentes"]
     assert len(data["filas_muestra"]) == 1
+
+
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.search_datastore")
+def test_api_preview_dataset_datastore_spanish_keys(mock_ds, mock_res):
+    """Verificar vista previa cuando search_datastore retorna llaves normalizadas en espanol (campos y registros)."""
+    mock_res.return_value = [
+        {"id": "res-es", "nombre": "Recurso ES", "formato": "csv", "url": "https://example.com/r.csv"}
+    ]
+    mock_ds.return_value = {
+        "campos": [{"id": "depto"}, {"id": "total"}],
+        "registros": [{"depto": "Guatemala", "total": 100}]
+    }
+
+    resp = client.get("/api/v1/ine/slug-es/vista-previa?limite=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["origen"] == "datastore_ckan"
+    assert data["columnas"] == ["depto", "total"]
+    assert data["filas_muestra"] == [{"depto": "Guatemala", "total": 100}]
+
+
+def test_api_root_and_health_endpoints():
+    """Verificar endpoints de estado raiz (/), salud (/health) y documentacion scalar (/docs)."""
+    resp_home = client.get("/")
+    assert resp_home.status_code == 200
+    assert resp_home.json() == {"message": "API de Balam Data Systems"}
+
+    resp_health = client.get("/health")
+    assert resp_health.status_code == 200
+    health_data = resp_health.json()
+    assert health_data["status"] == "ok"
+    assert health_data["service"] == "Balam Data Systems"
+
+    resp_docs = client.get("/docs")
+    assert resp_docs.status_code == 200
+    assert "text/html" in resp_docs.headers.get("content-type", "")
+

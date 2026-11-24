@@ -52,3 +52,20 @@ async def scalar_docs():
         openapi_url=app.openapi_url,
         title=app.title,
     )
+
+
+# endpoints de verificacion de estado y salud del servicio
+@app.get("/", tags=["Salud y Estado"])
+def home():
+    """Verificar que la api principal esta activa."""
+    return {"message": "API de Balam Data Systems"}
+
+
+@app.get("/health", tags=["Salud y Estado"])
+def health_check():
+    """Verificar estado de salud del contenedor y servicio."""
+    return {
+        "status": "ok",
+        "service": app.title,
+        "version": app.version,
+    }
