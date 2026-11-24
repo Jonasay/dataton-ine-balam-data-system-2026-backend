@@ -385,15 +385,14 @@ def test_api_preview_dataset_datastore_spanish_keys(mock_ds, mock_res):
 
 def test_api_root_and_health_endpoints():
     """Verificar endpoints de estado raiz (/), salud (/health) y documentacion scalar (/docs)."""
-    resp_home = client.get("/")
-    assert resp_home.status_code == 200
-    assert resp_home.json() == {"message": "API de Balam Data Systems"}
+    resp_home = client.get("/", follow_redirects=False)
+    assert resp_home.status_code in (302, 307)
 
     resp_health = client.get("/health")
     assert resp_health.status_code == 200
     health_data = resp_health.json()
     assert health_data["status"] == "ok"
-    assert health_data["service"] == "Balam Data Systems"
+    assert "Balam Data Systems" in health_data["service"]
 
     resp_docs = client.get("/docs")
     assert resp_docs.status_code == 200

@@ -330,14 +330,33 @@ def ensure_guatemala_geojson(target_path: Optional[Path] = None) -> Path:
 
     # descargar desde fuente abierta oficial geoboundaries y normalizar codigos ine
     import requests
-    url = (
-        "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/"
-        "main/releaseData/gbOpen/GTM/ADM1/"
-        "geoBoundaries-GTM-ADM1.geojson"
-    )
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=90)
-    resp.raise_for_status()
-    data = resp.json()
+    urls = [
+        "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/GTM/ADM1/geoBoundaries-GTM-ADM1.geojson",
+        "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/main/releaseData/gbOpen/GTM/ADM1/geoBoundaries-GTM-ADM1.geojson",
+        "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/GTM/ADM1/geoBoundaries-GTM-ADM1.geojson",
+    ]
+    data = None
+    for url in urls:
+        try:
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=90)
+            resp.raise_for_status()
+            if resp.text and resp.text.strip().startswith("{"):
+                data = resp.json()
+                break
+        except Exception:
+            continue
+
+    if data is None:
+        api_resp = requests.get(
+            "https://www.geoboundaries.org/api/current/gbOpen/GTM/ADM1/",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=60,
+        )
+        api_resp.raise_for_status()
+        dl_url = api_resp.json().get("gjDownloadURL")
+        resp = requests.get(dl_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
 
     for feat in data.get("features", []):
         props = feat.get("properties", {})
