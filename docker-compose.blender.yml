@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  blender:
+    build:
+      context: .
+      dockerfile: Dockerfile.blender
+    volumes:
+      - ./data:/workspace/data
+      - ./scripts:/workspace/scripts
+    # uso:
+    # docker compose -f docker-compose.blender.yml run --rm blender --input data/processed/modelo_3d_resumen_accidentes_2025.glb --output data/processed/render_guatemala_3d.png

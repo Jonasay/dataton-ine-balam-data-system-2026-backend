@@ -1,0 +1,15 @@
+# imagen base ligera linux debian para blender headless multiplataforma
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# instalar dependencias minimas de sistema y blender
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    blender \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# punto de entrada por defecto para renderizar guatemala
+ENTRYPOINT ["blender", "-b", "-P", "scripts/blender_render_guatemala.py", "--"]
