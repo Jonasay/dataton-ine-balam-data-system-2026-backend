@@ -76,7 +76,7 @@ from src.process.relief_3d import (
 def _resolve_raw_path(file_path: Union[str, Path]) -> Path:
     """Resolver ruta de archivo en directorio raw buscando coincidencias si es necesario."""
     path = Path(file_path)
-    if path.is_absolute() and path.exists():
+    if path.exists():
         return path
 
     direct_path = RAW_DATA_DIR / path
@@ -89,13 +89,17 @@ def _resolve_raw_path(file_path: Union[str, Path]) -> Path:
     if matches:
         return matches[0]
 
+    if path.name == "departamentos_gt.geojson":
+        from src.core.geo_master import ensure_guatemala_geojson
+        return ensure_guatemala_geojson(direct_path)
+
     return direct_path
 
 
 def _resolve_processed_path(file_path: Union[str, Path]) -> Path:
     """Resolver ruta de archivo en directorio processed buscando coincidencias si es necesario."""
     path = Path(file_path)
-    if path.is_absolute() and path.exists():
+    if path.exists():
         return path
 
     direct_path = PROCESSED_DATA_DIR / path
@@ -223,7 +227,10 @@ def merge_geo_with_parquet(
     # determinar la columna de codigo departamental si no esta presente
     active_code_col = code_col
     if existing_cols and active_code_col not in existing_cols:
-        for cand in ["depto_ocu", "depto", "departamento", "cod_depto", "codigo_depto"]:
+        for cand in [
+            "depto_codigo", "depto_codigo_norm", "depto_ocu",
+            "depto", "departamento", "cod_depto", "codigo_depto"
+        ]:
             if cand in existing_cols:
                 active_code_col = cand
                 break
@@ -263,6 +270,14 @@ def derive_topic_title(parquet_name_or_path: Union[str, Path], fallback_col: str
     return fallback_col.replace("_", " ").title()
 
 
+def _format_metric_number(value: Any) -> str:
+    # formatear valores numericos respetando enteros grandes y tasas decimales
+    num = float(value or 0.0)
+    if abs(num - round(num)) < 1e-6:
+        return f"{int(round(num)):,}"
+    return f"{num:,.2f}"
+
+
 def build_guatemala_sidebar_html(
     merged_gdf: Any,
     value_col: str = "valor",
@@ -275,21 +290,34 @@ def build_guatemala_sidebar_html(
             return ""
 
         sorted_df = merged_gdf.sort_values(by=value_col, ascending=False)
-        total_val = int(merged_gdf[value_col].sum())
+        active_name_col = name_col if name_col in getattr(merged_gdf, "columns", []) else "nombre"
+        series_vals = merged_gdf[value_col].astype(float)
+        is_rate_metric = any(
+            value_col.startswith(pref)
+            for pref in ["tasa_", "pct_", "indice_", "razon_", "inflacion_", "brecha_", "perdida_"]
+        )
+        total_val = float(series_vals.sum())
+        avg_val = float(series_vals.mean())
+        primary_kpi_label = "Mediana Nacional" if is_rate_metric else "Total Nacional"
+        primary_kpi_val = _format_metric_number(series_vals.median() if is_rate_metric else total_val)
+        avg_val_fmt = _format_metric_number(avg_val)
+
         max_row = sorted_df.iloc[0]
         min_row = sorted_df.iloc[-1]
-        avg_val = int(merged_gdf[value_col].mean())
-        max_num = max_row[value_col] if max_row[value_col] > 0 else 1
+        max_num = float(max_row[value_col]) if float(max_row[value_col]) > 0 else 1.0
+        max_val_fmt = _format_metric_number(max_row[value_col])
+        min_val_fmt = _format_metric_number(min_row[value_col])
         display_topic = topic_title or f"Datos de {value_col.capitalize()}"
 
         items_html = ""
         for idx, (_, row) in enumerate(sorted_df.iterrows(), start=1):
-            pct = (row[value_col] / max_num) * 100
-            val_formatted = f"{int(row[value_col]):,}"
+            row_val = float(row[value_col] or 0.0)
+            pct = (row_val / max_num) * 100
+            val_formatted = _format_metric_number(row_val)
             items_html += f"""
             <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 8px; border-bottom:1px solid #f1f5f9; font-size:12px;">
               <div style="flex:1;">
-                <div style="font-weight:600; color:#1e293b;">#{idx} {row.get(name_col, 'Dpto')}</div>
+                <div style="font-weight:600; color:#1e293b;">#{idx} {row.get(active_name_col, 'Dpto')}</div>
                 <div style="background:#e2e8f0; border-radius:4px; height:5px; width:100%; margin-top:3px; overflow:hidden;">
                   <div style="background:linear-gradient(90deg, #f59e0b, #ef4444); height:100%; width:{pct:.1f}%;"></div>
                 </div>
@@ -321,17 +349,17 @@ def build_guatemala_sidebar_html(
           <div id="gt-panel-content" style="display:flex; flex-direction:column; overflow:hidden;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
               <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
-                <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Total Nacional</div>
-                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{total_val:,}</div>
+                <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">{primary_kpi_label}</div>
+                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{primary_kpi_val}</div>
               </div>
               <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0;">
                 <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase;">Promedio Dpto</div>
-                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{avg_val:,}</div>
+                <div style="font-size:17px; font-weight:800; color:#0f172a; margin-top:2px;">{avg_val_fmt}</div>
               </div>
               <div style="background:white; padding:8px 10px; border-radius:8px; border:1px solid #e2e8f0; grid-column:span 2;">
                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                  <span>🏆 <b>Mayor:</b> {max_row.get(name_col, '')} ({int(max_row[value_col]):,})</span>
-                  <span style="color:#64748b;">📉 <b>Menor:</b> {min_row.get(name_col, '')} ({int(min_row[value_col]):,})</span>
+                  <span>🏆 <b>Mayor:</b> {max_row.get(active_name_col, '')} ({max_val_fmt})</span>
+                  <span style="color:#64748b;">📉 <b>Menor:</b> {min_row.get(active_name_col, '')} ({min_val_fmt})</span>
                 </div>
               </div>
             </div>
@@ -472,7 +500,8 @@ def create_plotly_choropleth(
 ) -> Any:
     """Construir mapa coropletico con plotly express con vista 3D y encuadre en Guatemala."""
     px = _require_plotly()
-    hover_field = hover_name if hover_name in getattr(merged_gdf, "columns", []) else None
+    cols = getattr(merged_gdf, "columns", [])
+    hover_field = hover_name if hover_name in cols else ("nombre" if "nombre" in cols else None)
 
     # normalizar features asegurando que tengan identificador explicito para vincular con las ubicaciones
     geo_data = getattr(merged_gdf, "__geo_interface__", None)
