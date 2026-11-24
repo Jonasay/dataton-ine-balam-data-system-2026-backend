@@ -261,7 +261,7 @@ def get_plotly_choropleth_map(
         raise HTTPException(status_code=500, detail=f"error al generar mapa plotly: {exc}")
 
 
-# mapa 3D iteractivo con deck.gl
+# mapa 3d iteractivo con deck.gl
 @router.get("/mapa-3d-relieve", summary="Mapa 3D interactivo con relieve segun datos", response_class=HTMLResponse)
 def get_3d_relief_map(
     ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
@@ -402,7 +402,7 @@ def get_blender_3d_render(
         glb_path = PROCESSED_DATA_DIR / f"modelo_3d_{parquet_stem}.glb"
         png_path = PROCESSED_DATA_DIR / f"render_3d_{parquet_stem}.png"
 
-        # generar escena 3D y exportar a glb con silueta de guatemala
+        # generar escena 3d y exportar a glb con silueta de guatemala
         scene = build_guatemala_relief_scene(
             merged_gdf,
             value_col=columna_valor,

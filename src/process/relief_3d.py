@@ -500,7 +500,7 @@ def build_guatemala_relief_scene(
         raw_name = str(row.get(name_col, f"Dpto_{code}")).replace(" ", "_")
         name_clean = "".join(c for c in raw_name if c.isalnum() or c in ["_", "-"])
 
-        # determinar material PBR segun estilo
+        # determinar material pbr segun estilo
         if color_mode in ["black", "negro"]:
             pbr_color = [0.07, 0.07, 0.09, 1.0] # negro obsidiana mate
             metallic = 0.30

@@ -157,9 +157,10 @@ def get_dataset_resources(slug: str) -> List[Dict[str, Any]]:
 def download_resource_file(
     resource: Dict[str, Any],
     base_dir: Path = RAW_DATA_DIR,
-    timeout: int = DEFAULT_DOWNLOAD_TIMEOUT
+    timeout: int = DEFAULT_DOWNLOAD_TIMEOUT,
+    max_retries: int = 4
 ) -> Path:
-    """Descargar un recurso a disco y anotar procedencia en manifest.jsonl."""
+    """Descargar un recurso a disco con reintentos automaticos y anotar procedencia en manifest.jsonl."""
     dataset_name = resource.get("dataset", "general")
     target_dir = base_dir / dataset_name
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -176,17 +177,37 @@ def download_resource_file(
         raw_filename = f"{res_id}.{res_fmt}"
         
     file_path = target_dir / raw_filename
-    hasher = hashlib.sha256()
+    temp_file = target_dir / f"{raw_filename}.part"
     
-    # transmitir el contenido al disco en bloques de 1mb
-    with requests.get(resource_url, headers=DEFAULT_HEADERS, stream=True, timeout=timeout) as response:
-        response.raise_for_status()
-        with open(file_path, "wb") as output_file:
-            for chunk in response.iter_content(chunk_size=1048576):
-                if chunk:
-                    output_file.write(chunk)
-                    hasher.update(chunk)
-                    
+    last_err: Optional[Exception] = None
+    for attempt in range(1, max_retries + 1):
+        hasher = hashlib.sha256()
+        try:
+            with requests.get(resource_url, headers=DEFAULT_HEADERS, stream=True, timeout=timeout) as response:
+                response.raise_for_status()
+                with open(temp_file, "wb") as output_file:
+                    for chunk in response.iter_content(chunk_size=1048576):
+                        if chunk:
+                            output_file.write(chunk)
+                            hasher.update(chunk)
+                            
+            # si finalizo correctamente, mover el archivo temporal al destino definitivo
+            if temp_file.exists():
+                temp_file.replace(file_path)
+            last_err = None
+            break
+        except Exception as exc:
+            last_err = exc
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            if attempt < max_retries:
+                time.sleep(2 * attempt)
+            else:
+                raise RuntimeError(f"Fallo descarga de {resource_url} tras {max_retries} intentos: {exc}") from exc
+                
     # agregar registro de auditoria al archivo manifest
     manifest_record = {
         **resource,
