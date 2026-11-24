@@ -11,6 +11,7 @@ from src.process.etl_pipeline import (
     process_basic_basket,
     process_cpi_indicators,
     process_general_microdata,
+    process_higher_education,
     process_population_projections,
 )
 
@@ -120,6 +121,15 @@ def run_full_etl():
             results.append(("migración: retornados usa aéreo 2023", out_return23))
     except Exception as e:
         print(f"error en migracion: {e}")
+
+    # 8. educacion: matriculados educacion superior 2025
+    try:
+        print("\n[8/8] procesando educacion superior...")
+        path_edu = process_higher_education()
+        if path_edu.exists():
+            results.append(("educación: matriculados superior 2025", path_edu))
+    except Exception as e:
+        print(f"error en educacion: {e}")
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 70)

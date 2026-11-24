@@ -257,24 +257,27 @@ for code, data in DEPARTAMENTOS_INE.items():
     _NAME_LOOKUP[data["iso"]] = data
 
 
-def normalize_department(value: Union[str, int]) -> Optional[Dict[str, Any]]:
+def normalize_department(value: Union[str, int, float]) -> Optional[Dict[str, Any]]:
     """buscar y devolver registro normalizado de un departamento por codigo, nombre o iso."""
     if value is None:
         return None
         
-    if isinstance(value, int):
-        return DEPARTAMENTOS_INE.get(value)
-        
+    if isinstance(value, (int, float)):
+        try:
+            return DEPARTAMENTOS_INE.get(int(value))
+        except (ValueError, OverflowError):
+            pass
+            
     val_str = str(value).strip()
     if not val_str:
         return None
         
-    # intento directo por entero
+    # intento directo por entero o decimal
     try:
-        val_int = int(val_str)
+        val_int = int(float(val_str))
         if val_int in DEPARTAMENTOS_INE:
             return DEPARTAMENTOS_INE[val_int]
-    except ValueError:
+    except (ValueError, OverflowError):
         pass
         
     # busqueda por nombre limpio

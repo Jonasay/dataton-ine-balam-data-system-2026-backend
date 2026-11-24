@@ -330,6 +330,54 @@ def process_general_microdata(
     return output_parquet
 
 
+def process_higher_education(
+    raw_file: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
+) -> Path:
+    """procesar matriculados de educacion superior."""
+    if raw_file is None:
+        raw_file = RAW_DATA_DIR / "educacion-superior-matriculados" / "matriculados_educacion_superior-2025.xlsx"
+    if output_dir is None:
+        output_dir = PROCESSED_DATA_DIR / "educacion"
+        
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not raw_file.exists():
+        print(f"aviso: archivo de educacion superior no encontrado en {raw_file}")
+        return output_dir / "matriculados_educacion_superior_2025.parquet"
+
+    print(f"procesando educacion superior desde: {raw_file.name}...")
+    import fastexcel
+    excel = fastexcel.read_excel(str(raw_file))
+    df = excel.load_sheet(0).to_polars()
+    
+    # normalizar columnas a minusculas
+    clean_cols = [c.strip().lower() for c in df.columns]
+    df = df.rename(dict(zip(df.columns, clean_cols)))
+    
+    # normalizar departamento
+    if "depto" in df.columns:
+        parsed_departments = []
+        for val in df["depto"].to_list():
+            record = normalize_depto(val)
+            if record:
+                parsed_departments.append((record["codigo"], record["nombre"], record["iso"], record["region_id"], record["region_nombre"]))
+            else:
+                parsed_departments.append((None, None, None, None, None))
+                
+        df = df.with_columns([
+            pl.Series("depto_codigo_norm", [p[0] for p in parsed_departments], dtype=pl.Int32),
+            pl.Series("depto_nombre_norm", [p[1] for p in parsed_departments], dtype=pl.Utf8),
+            pl.Series("depto_iso_norm", [p[2] for p in parsed_departments], dtype=pl.Utf8),
+            pl.Series("region_id_norm", [p[3] for p in parsed_departments], dtype=pl.Int32),
+            pl.Series("region_nombre_norm", [p[4] for p in parsed_departments], dtype=pl.Utf8),
+        ])
+        
+    out_file = output_dir / "matriculados_educacion_superior_2025.parquet"
+    df.write_parquet(str(out_file), compression="zstd")
+    print(f"✓ matriculados educacion superior guardados en: {out_file} ({df.shape[0]} filas)")
+    return out_file
+
+
 # alias compatibles
 process_proyecciones_poblacion = process_population_projections
 process_canasta_basica = process_basic_basket

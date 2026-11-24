@@ -17,7 +17,10 @@ if str(root_dir) not in sys.path:
 
 from src.core.config import DEFAULT_HEADERS, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from src.process.run_etl import run_full_etl
-from src.analysis.indicators import compute_consolidated_department_dataset
+from src.analysis.indicators import (
+    compute_consolidated_department_dataset,
+    compute_consolidated_municipal_dataset,
+)
 
 # catalogo de recursos crudos requeridos para el pipeline
 REQUIRED_RESOURCES = [
@@ -98,6 +101,12 @@ REQUIRED_RESOURCES = [
         "name": "necropsias_inacif_2024",
         "url": "https://datos.ine.gob.gt/dataset/cc975da9-d43f-46f6-ad5a-4e0cb3514300/resource/dd00d3ac-96d1-43fa-8611-8cfa14926509/download/base-de-datos-necropsias-inacif-2024.xlsx",
         "local_path": "data/raw/hechos-delictivos-servicio-medico-necropsias-inacif/base-de-datos-necropsias-inacif-2024.xlsx",
+    },
+    {
+        "dataset": "educacion-superior-matriculados",
+        "name": "matriculados_superior_2025",
+        "url": "https://datos.ine.gob.gt/dataset/8bec075d-31b3-465c-a3a9-597b08618401/resource/18027628-af8a-469c-b293-243f7803ba0b/download/matriculados_educacion_superior-2025.xlsx",
+        "local_path": "data/raw/educacion-superior-matriculados/matriculados_educacion_superior-2025.xlsx",
     },
     {
         "dataset": "accidentes-de-transito-fallecidos-y-lesionados",
@@ -193,24 +202,37 @@ def run_pipeline(year: int = 2024):
     print("=" * 70)
     run_full_etl()
 
-    # 3. calcular y consolidar matriz de indicadores
+    # 3. calcular y consolidar matriz de indicadores departamentales y municipales
     print("\n" + "=" * 70)
     print(f"calculando y consolidando indicadores para el anio {year}")
     print("=" * 70)
     indicators_df = compute_consolidated_department_dataset(year=year)
+    mup_indicators_df = compute_consolidated_municipal_dataset(year=year)
 
     # 4. mostrar resumen de indicadores principales
     display_cols = [
         "depto_codigo", "depto_nombre", "poblacion_total",
         "tasa_natalidad_por_1000", "tasa_mortalidad_por_1000",
         "tasa_necropsias_por_100k", "tasa_victimas_viales_por_100k",
-        "tasa_retorno_migratorio_por_10k"
+        "tasa_retorno_migratorio_por_10k", "tasa_matricula_superior_por_10k",
+        "inflacion_regional_interanual",
     ]
     
     print("\n" + "=" * 70)
     print("resumen de indicadores por departamento:")
     print("=" * 70)
     print(indicators_df.select(display_cols).sort("tasa_retorno_migratorio_por_10k", descending=True))
+
+    mup_cols = [
+        "mupio_codigo_str", "depto_nombre", "poblacion_total",
+        "tasa_natalidad_por_1000", "tasa_mortalidad_por_1000",
+        "tasa_necropsias_por_100k", "tasa_victimas_viales_por_100k",
+        "tasa_matricula_superior_por_10k",
+    ]
+    print("\n" + "=" * 70)
+    print("resumen de indicadores por municipio (muestra de 5 con mayor poblacion):")
+    print("=" * 70)
+    print(mup_indicators_df.sort("poblacion_total", descending=True).select(mup_cols).head(5))
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 70)
