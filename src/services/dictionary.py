@@ -111,3 +111,36 @@ def update_translation(
     entry["estado"] = "validado" if validated else "en_revision"
     write_entries(entries, path)
     return entry
+
+
+def bulk_import_terms(
+    terms: list[tuple[str, dict[str, Any]]],
+    *,
+    path: Path = DICTIONARY_FILE,
+) -> int:
+    """Insert many source terms in one atomic file write; return the new-entry count."""
+    entries = read_entries(path)
+    by_normalized = {normalize_term(item["termino_es"]): item for item in entries}
+    added = 0
+    for term, source in terms:
+        clean_term = _TERM_RE.sub(" ", term.strip())
+        normalized = normalize_term(clean_term)
+        if not normalized:
+            continue
+        entry = by_normalized.get(normalized)
+        if entry is None:
+            entry = {
+                "termino_es": clean_term,
+                "definicion_es": "",
+                "traducciones": {},
+                "fuentes": [],
+                "estado": "pendiente",
+            }
+            entries.append(entry)
+            by_normalized[normalized] = entry
+            added += 1
+        if source not in entry["fuentes"]:
+            entry["fuentes"].append(source)
+    if terms:
+        write_entries(entries, path)
+    return added
