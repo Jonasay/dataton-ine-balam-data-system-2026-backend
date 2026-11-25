@@ -115,7 +115,8 @@ def import_dataset_terms(
             "dataset": dataset_slug,
             "recursos_consultados": min(len(resources), max_resources),
             "terminos_nuevos": imported,
-            "terminos_procesados": len(terms_to_import),\n            "registros_consultados": scanned,
+            "terminos_procesados": len(terms_to_import),
+            "registros_consultados": scanned,
             "estado_traducciones": "pendientes de traducción y validación comunitaria",
             "errores_recursos": errors,
         }
