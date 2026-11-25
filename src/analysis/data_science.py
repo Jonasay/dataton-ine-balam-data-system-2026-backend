@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
 import json
 import numpy as np
@@ -9,7 +8,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 
-DATA_PROCESSED = Path("data/processed")
+from src.core.config import PROCESSED_DATA_DIR
+
+DATA_PROCESSED = PROCESSED_DATA_DIR
 INDICATORS_PATH = DATA_PROCESSED / "indicadores" / "indicadores_consolidados_departamentales_2024.parquet"
 ANALYSIS_DIR = DATA_PROCESSED / "analisis"
 ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
