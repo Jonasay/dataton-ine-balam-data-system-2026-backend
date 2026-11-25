@@ -8,7 +8,7 @@ from src.ingestion.ine import get_dataset_resources, search_datastore
 from src.schemas.dictionary import DictionaryTermRequest, DictionaryTranslationRequest
 from src.services.dictionary import (
     SUPPORTED_LANGUAGES,
-    normalize_term,
+    bulk_import_terms,
     read_entries,
     update_translation,
     upsert_term,
@@ -83,50 +83,38 @@ def import_dataset_terms(
     """Importar encabezados y valores de texto del datastore CKAN como términos pendientes."""
     try:
         resources = get_dataset_resources(dataset_slug)
-        imported = 0
+        terms_to_import = []
         scanned = 0
         errors = []
         for resource in resources[:max_resources]:
-            if imported >= max_terms:
-                break
             try:
                 data = search_datastore(resource_id=resource["id"], limit=max_records)
             except Exception as exc:
                 errors.append({"recurso_id": resource.get("id"), "error": str(exc)})
                 continue
 
-            terms = []
+            source_base = {
+                "fuente": "INE CKAN",
+                "dataset": dataset_slug,
+                "recurso_id": resource.get("id"),
+            }
             for field in data.get("campos", []):
                 name = field.get("id")
                 if isinstance(name, str):
-                    terms.append((name, "campo"))
+                    terms_to_import.append((name, {**source_base, "campo": "nombre_columna"}))
             for row in data.get("registros", []):
                 for field, value in row.items():
                     if isinstance(value, str) and value.strip() and len(value.strip()) <= 200:
-                        terms.append((value.strip(), field))
+                        terms_to_import.append((value.strip(), {**source_base, "campo": field}))
+            scanned += len(data.get("registros", []))
 
-            for term, field in terms:
-                scanned += 1
-                if imported >= max_terms:
-                    break
-                was_new = not any(normalize_term(item["termino_es"]) == normalize_term(term) for item in read_entries())
-                upsert_term(
-                    term,
-                    source={
-                        "fuente": "INE CKAN",
-                        "dataset": dataset_slug,
-                        "recurso_id": resource.get("id"),
-                        "campo": field,
-                    },
-                )
-                if was_new:
-                    imported += 1
-
+        terms_to_import = terms_to_import[:max_terms]
+        imported = bulk_import_terms(terms_to_import)
         return {
             "dataset": dataset_slug,
             "recursos_consultados": min(len(resources), max_resources),
             "terminos_nuevos": imported,
-            "valores_revisados": scanned,
+            "terminos_procesados": len(terms_to_import),\n            "registros_consultados": scanned,
             "estado_traducciones": "pendientes de traducción y validación comunitaria",
             "errores_recursos": errors,
         }
