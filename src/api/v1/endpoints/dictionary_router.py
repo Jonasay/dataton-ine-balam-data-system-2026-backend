@@ -9,6 +9,7 @@ from src.schemas.dictionary import DictionaryTermRequest, DictionaryTranslationR
 from src.services.dictionary import (
     SUPPORTED_LANGUAGES,
     bulk_import_terms,
+    normalize_term,
     read_entries,
     update_translation,
     upsert_term,
