@@ -6,8 +6,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-from src.core.config import PROCESSED_DATA_DIR
-
 # paleta de 22 colores especificos para los departamentos de guatemala
 DEPT_COLORS_RGB: Dict[str, tuple[int, int, int]] = {
     "01": (59, 130, 246),   # guatemala: azul real
@@ -270,10 +268,10 @@ def build_deckgl_3d_relief_html(
       <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; font-size:11px; color:#cbd5e1;">
         <span>Escala de Relieve: <b id="lbl-scale" style="color:#38bdf8;">1.0x</b></span>
         <div style="display:flex; gap:4px;">
-          <button class="btn-scale" onclick="adjustScale(0.5)">0.5x</button>
-          <button class="btn-scale active" id="scale-1" onclick="adjustScale(1.0)">1.0x</button>
-          <button class="btn-scale" onclick="adjustScale(1.6)">1.6x</button>
-          <button class="btn-scale" onclick="adjustScale(2.5)">2.5x</button>
+          <button class="btn-scale" onclick="adjustScale(0.5, this)">0.5x</button>
+          <button class="btn-scale active" id="scale-1" onclick="adjustScale(1.0, this)">1.0x</button>
+          <button class="btn-scale" onclick="adjustScale(1.6, this)">1.6x</button>
+          <button class="btn-scale" onclick="adjustScale(2.5, this)">2.5x</button>
         </div>
       </div>
     </div>
@@ -407,11 +405,11 @@ function setColorMode(mode) {{
   deckInstance.setProps({{ layers: [buildLayer()] }});
 }}
 
-function adjustScale(factor) {{
+function adjustScale(factor, btn) {{
   currentScale = factor;
   document.getElementById('lbl-scale').innerText = factor.toFixed(1) + 'x';
   document.querySelectorAll('.btn-scale').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (btn) btn.classList.add('active');
   deckInstance.setProps({{ layers: [buildLayer()] }});
 }}
 

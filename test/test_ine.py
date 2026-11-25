@@ -264,6 +264,45 @@ def test_api_download_resource(mock_res, mock_download, tmp_path):
     assert resp_404.status_code == 404
 
 
+def test_api_download_and_preview_reuse_local_cache(tmp_path, monkeypatch):
+    """Verificar que descarga y vista previa reutilicen archivo local sin volver a descargar."""
+    raw_dir = tmp_path / "raw"
+    proc_dir = tmp_path / "processed"
+    dataset_dir = raw_dir / "recursos-hidricos"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    cached_csv = dataset_dir / "agua.csv"
+    cached_csv.write_text("departamento,caudal\nGuatemala,120\nPetén,85\n", encoding="utf-8")
+
+    monkeypatch.setattr("src.api.v1.endpoints.ine_router.RAW_DATA_DIR", raw_dir)
+    monkeypatch.setattr("src.api.v1.endpoints.ine_router.PROCESSED_DATA_DIR", proc_dir)
+
+    mock_resources = [
+        {
+            "id": "res-agua-1",
+            "nombre": "agua.csv",
+            "formato": "csv",
+            "url": "https://datos.ine.gob.gt/files/agua.csv",
+            "dataset": "recursos-hidricos",
+        }
+    ]
+
+    with patch("src.api.v1.endpoints.ine_router.get_dataset_resources", return_value=mock_resources), \
+         patch("src.api.v1.endpoints.ine_router.download_resource_file") as mock_dl:
+        res_list = client.get("/api/v1/ine/recursos-hidricos/recursos")
+        assert res_list.status_code == 200
+        assert res_list.json()["recursos"][0]["descargado_local"] is True
+
+        res_prev = client.get("/api/v1/ine/recursos-hidricos/vista-previa?recurso_id=res-agua-1")
+        assert res_prev.status_code == 200
+        assert res_prev.json()["origen"] == "archivo_local_cache"
+        assert res_prev.json()["total_filas_muestra"] == 2
+
+        res_dl = client.get("/api/v1/ine/recursos-hidricos/descargar/res-agua-1")
+        assert res_dl.status_code == 200
+        assert b"Guatemala,120" in res_dl.content
+        mock_dl.assert_not_called()
+
+
 @patch("src.api.v1.endpoints.ine_router.has_remote_changed")
 @patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
 def test_api_check_remote_change(mock_res, mock_change):

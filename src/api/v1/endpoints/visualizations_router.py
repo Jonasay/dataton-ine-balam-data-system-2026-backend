@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -37,7 +36,7 @@ from src.process.relief_3d import (
     build_guatemala_relief_scene,
     render_guatemala_with_blender,
 )
-from src.schemas.visualizations import PlotlyChartJsonResponse, VisualizationCatalogResponse
+from src.schemas.visualizations import VisualizationCatalogResponse
 
 router = APIRouter(
     prefix="/visualizaciones",
@@ -177,6 +176,18 @@ VISUALIZATION_CATALOG_ITEMS: List[Dict[str, Any]] = [
         "endpoint_json": "/api/v1/visualizaciones/tendencias/ipc?vista=regiones&formato=json",
         "endpoint_html": "/api/v1/visualizaciones/tendencias/ipc?vista=regiones",
         "parametros_principales": ["vista"],
+    },
+    {
+        "id_visualizacion": "tendencia_crecimiento_demografico",
+        "titulo": "Curvas de Crecimiento Demográfico Departamental (2015–2030)",
+        "categoria": "Tendencias y Estadística",
+        "tipo_grafica": "line",
+        "descripcion": "Evolución poblacional proyectada de los departamentos con mayor peso demográfico.",
+        "soporta_3d": False,
+        "soporta_animacion": False,
+        "endpoint_json": "/api/v1/visualizaciones/tendencias/crecimiento-demografico?top_n=8&formato=json",
+        "endpoint_html": "/api/v1/visualizaciones/tendencias/crecimiento-demografico?top_n=8",
+        "parametros_principales": ["top_n", "formato"],
     },
     {
         "id_visualizacion": "correlaciones_heatmap",
@@ -801,8 +812,13 @@ def get_indicators_blender_render(
         glb_path = out_dir / f"escena_{indicador}_{estilo_color}.glb"
         png_path = out_dir / f"render_blender_{indicador}_{estilo_color}_{ancho_px}x{alto_px}.png"
 
-        # reutilizar render pregenerado si existe y no se solicita regenerar
-        if not regenerar and abs(grosor_base_mm - 0.6) < 1e-6 and png_path.exists() and png_path.stat().st_size > 0:
+        # reutilizar render pregenerado valido si existe y no se solicita regenerar
+        is_valid_cached_png = (
+            png_path.exists()
+            and png_path.stat().st_size > 100
+            and png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        )
+        if not regenerar and abs(grosor_base_mm - 0.6) < 1e-6 and is_valid_cached_png:
             disposition = "attachment" if descargar else "inline"
             return FileResponse(
                 str(png_path),

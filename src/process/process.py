@@ -159,10 +159,27 @@ def aggregate_parquet(
     """Resumir y agrupar registros de parquet de forma eficiente sin requerir sql."""
     pl = _require_polars()
     path = _resolve_processed_path(parquet_path)
+    if not path.exists() and not hasattr(pl, "assert_called"):
+        raise FileNotFoundError(f"archivo parquet no encontrado: {parquet_path}")
 
     lazy_df = pl.scan_parquet(str(path))
     if filter_col is not None and filter_val is not None:
-        lazy_df = lazy_df.filter(pl.col(filter_col) == filter_val)
+        active_filter_val = filter_val
+        try:
+            schema = lazy_df.collect_schema()
+            if filter_col not in schema:
+                raise ValueError(f"la columna de filtro '{filter_col}' no existe en {path.name}")
+            col_dtype = schema[filter_col]
+            if isinstance(active_filter_val, str):
+                if col_dtype.is_integer():
+                    active_filter_val = int(active_filter_val)
+                elif col_dtype.is_float():
+                    active_filter_val = float(active_filter_val)
+        except ValueError:
+            raise
+        except Exception:
+            pass
+        lazy_df = lazy_df.filter(pl.col(filter_col) == active_filter_val)
 
     # agrupar, contar y ordenar de mayor a menor cantidad
     result_df = (
@@ -213,11 +230,15 @@ def merge_geo_with_parquet(
     """Unir capa geografica con datos analiticos extraidos de parquet mediante duckdb."""
     duckdb = _require_duckdb()
     path = _resolve_processed_path(parquet_path)
+    if not path.exists() and not hasattr(duckdb, "assert_called"):
+        raise FileNotFoundError(f"archivo parquet no encontrado: {parquet_path}")
+
+    safe_path = str(path).replace("'", "''")
 
     # identificar columnas existentes en el archivo parquet
     existing_cols = []
     try:
-        sample_query = duckdb.sql(f"SELECT * FROM '{path}' LIMIT 0")
+        sample_query = duckdb.sql(f"SELECT * FROM '{safe_path}' LIMIT 0")
         sample_cols = getattr(sample_query, "columns", None)
         if isinstance(sample_cols, list):
             existing_cols = sample_cols
@@ -228,23 +249,30 @@ def merge_geo_with_parquet(
     active_code_col = code_col
     if existing_cols and active_code_col not in existing_cols:
         for cand in [
-            "depto_codigo", "depto_codigo_norm", "depto_ocu",
+            "depto_codigo", "depto_codigo_norm", "depto_ocu", "depocu",
             "depto", "departamento", "cod_depto", "codigo_depto"
         ]:
             if cand in existing_cols:
                 active_code_col = cand
                 break
 
+    q_code = active_code_col.replace('"', '""')
+    q_val = value_col.replace('"', '""')
+
     # seleccionar directamente o agregar por conteo si no existe columna valor precalculada
     if existing_cols and value_col not in existing_cols:
         sql_text = f"""
-            SELECT lpad(cast({active_code_col} as varchar), 2, '0') as cod,
-                   count(*) as {value_col}
-            FROM '{path}'
-            GROUP BY {active_code_col}
+            SELECT lpad(cast("{q_code}" as varchar), 2, '0') as cod,
+                   count(*) as "{q_val}"
+            FROM '{safe_path}'
+            WHERE "{q_code}" IS NOT NULL
+            GROUP BY "{q_code}"
         """
     else:
-        sql_text = f"SELECT lpad(cast({active_code_col} as varchar), 2, '0') as cod, {value_col} FROM '{path}'"
+        sql_text = (
+            f'SELECT lpad(cast("{q_code}" as varchar), 2, \'0\') as cod, '
+            f'"{q_val}" FROM \'{safe_path}\''
+        )
 
     data_table = duckdb.sql(sql_text).pl().to_pandas()
 
@@ -254,6 +282,112 @@ def merge_geo_with_parquet(
         merged_geodata[value_col] = merged_geodata[value_col].fillna(0)
 
     return merged_geodata
+
+
+def build_map_indicators_catalog(processed_dir: Path = PROCESSED_DATA_DIR) -> List[Dict[str, Any]]:
+    """Construir el catalogo de indicadores cartografiables a partir de los parquets disponibles."""
+    pl = _require_polars()
+
+    def _get_cols(rel_path: str) -> set[str]:
+        target = processed_dir / rel_path
+        if not target.exists():
+            return set()
+        try:
+            return set(pl.scan_parquet(str(target)).collect_schema().names())
+        except Exception:
+            return set()
+
+    catalog: List[Dict[str, Any]] = []
+
+    # indicadores de vulnerabilidad territorial (2024)
+    vuln_rel = "analisis/vulnerabilidad_departamental.parquet"
+    vuln_cols = _get_cols(vuln_rel)
+    if "indice_vulnerabilidad_ivst" in vuln_cols:
+        catalog.append({
+            "id": "indice_vulnerabilidad_ivst-2024",
+            "tema": "Vulnerabilidad",
+            "indicador": "Índice de Vulnerabilidad Socioeconómica Territorial (IVST)",
+            "periodo": 2024,
+            "ruta_parquet": vuln_rel,
+            "columna_codigo_parquet": "depto_codigo",
+            "columna_valor": "indice_vulnerabilidad_ivst",
+            "unidad": "Puntos (0-100)",
+            "titulo_mapa": "Índice de Vulnerabilidad Socioeconómica Territorial (IVST) · 2024",
+        })
+
+    # indicadores consolidados departamentales (2024)
+    dept_rel = "indicadores/indicadores_consolidados_departamentales_2024.parquet"
+    dept_cols = _get_cols(dept_rel)
+    dept_specs = [
+        ("Migración", "tasa_retorno_migratorio_por_10k", "Tasa de retorno migratorio por 10,000 hab.", "Retornados / 10k hab"),
+        ("Migración", "retornados_total", "Total de personas migrantes retornadas", "Personas"),
+        ("Migración", "pct_retornados_menores", "Proporción de niñez y adolescencia retornada", "% Menores (<18 años)"),
+        ("Migración", "pct_retornadas_mujeres", "Proporción de mujeres retornadas", "% Mujeres"),
+        ("Seguridad", "tasa_necropsias_por_100k", "Tasa de necropsias médico-legales INACIF por 100k hab.", "Necropsias / 100k hab"),
+        ("Seguridad", "necropsias_total", "Total de necropsias forenses INACIF", "Peritajes"),
+        ("Movilidad", "tasa_victimas_viales_por_100k", "Tasa de víctimas en accidentes de tránsito PNC por 100k hab.", "Víctimas / 100k hab"),
+        ("Movilidad", "tasa_mortalidad_vial_por_100k", "Tasa de mortalidad vial PNC por 100k hab.", "Fallecidos / 100k hab"),
+        ("Movilidad", "victimas_viales_total", "Total de víctimas en accidentes de tránsito", "Víctimas"),
+        ("Movilidad", "fallecidos_viales_total", "Fallecidos en accidentes de tránsito", "Fallecidos"),
+        ("Movilidad", "lesionados_viales_total", "Lesionados en accidentes de tránsito", "Lesionados"),
+        ("Educación", "tasa_matricula_superior_por_10k", "Tasa de matrícula en educación superior por 10k hab.", "Estudiantes / 10k hab"),
+        ("Educación", "matriculados_superior_total", "Matrícula total en educación superior", "Estudiantes"),
+        ("Educación", "pct_mujeres_superior", "Participación femenina en educación superior", "% Mujeres"),
+        ("Demografía", "poblacion_total", "Población total proyectada", "Habitantes"),
+        ("Demografía", "tasa_natalidad_por_1000", "Tasa bruta de natalidad (TBN)", "Nacidos / 1,000 hab"),
+        ("Demografía", "tasa_mortalidad_por_1000", "Tasa bruta de mortalidad (TBM)", "Defunciones / 1,000 hab"),
+        ("Demografía", "tasa_crecimiento_natural_por_1000", "Tasa de crecimiento natural (TCN)", "Saldo / 1,000 hab"),
+        ("Demografía", "razon_dependencia_demografica", "Razón de dependencia demográfica", "Dependientes / 100 act."),
+        ("Demografía", "indice_masculinidad", "Índice de masculinidad", "Hombres / 100 mujeres"),
+        ("Demografía", "nacimientos_total", "Total de nacimientos registrados", "Nacimientos"),
+        ("Demografía", "defunciones_total", "Total de defunciones registradas", "Defunciones"),
+        ("Economía", "inflacion_regional_interanual", "Inflación regional interanual del IPC", "Variación %"),
+        ("Economía", "indice_ipc_regional", "Índice de Precios al Consumidor regional (IPC)", "Índice base dic 2023=100"),
+    ]
+    for tema, col, label, unit in dept_specs:
+        if col in dept_cols:
+            catalog.append({
+                "id": f"{col}-2024",
+                "tema": tema,
+                "indicador": label,
+                "periodo": 2024,
+                "ruta_parquet": dept_rel,
+                "columna_codigo_parquet": "depto_codigo",
+                "columna_valor": col,
+                "unidad": unit,
+                "titulo_mapa": f"{label} por departamento · 2024",
+            })
+
+    # series 2025 disponibles en microdatos departamentales normalizados
+    edu25_rel = "educacion/matriculados_educacion_superior_2025.parquet"
+    if "depto_codigo_norm" in _get_cols(edu25_rel):
+        catalog.append({
+            "id": "matriculados_superior_total-2025",
+            "tema": "Educación",
+            "indicador": "Matrícula total en educación superior",
+            "periodo": 2025,
+            "ruta_parquet": edu25_rel,
+            "columna_codigo_parquet": "depto_codigo_norm",
+            "columna_valor": "valor",
+            "unidad": "Estudiantes",
+            "titulo_mapa": "Matrícula total en educación superior por departamento · 2025",
+        })
+
+    nac25_rel = "demografia/nacimientos_2025.parquet"
+    if "depocu" in _get_cols(nac25_rel):
+        catalog.append({
+            "id": "nacimientos_total-2025",
+            "tema": "Demografía",
+            "indicador": "Total de nacimientos registrados",
+            "periodo": 2025,
+            "ruta_parquet": nac25_rel,
+            "columna_codigo_parquet": "depocu",
+            "columna_valor": "valor",
+            "unidad": "Nacimientos",
+            "titulo_mapa": "Total de nacimientos registrados por departamento · 2025",
+        })
+
+    return catalog
 
 
 def derive_topic_title(parquet_name_or_path: Union[str, Path], fallback_col: str = "valor") -> str:

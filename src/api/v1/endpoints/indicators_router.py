@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 import polars as pl
 
+from src.core.config import PROCESSED_DATA_DIR
 from src.core.geo_master import normalize_department
 from src.schemas.indicators import (
-    DepartmentIndicatorItem,
     DepartmentIndicatorsResponse,
-    MunicipalIndicatorItem,
     MunicipalIndicatorsResponse,
-    IndicatorMethodologyCard,
     MethodologyCatalogResponse,
 )
 
@@ -20,7 +17,7 @@ router = APIRouter(
     tags=["Indicadores Socioeconómicos - Sistema Oficial"]
 )
 
-DATA_PROCESSED = Path("data/processed")
+DATA_PROCESSED = PROCESSED_DATA_DIR
 INDICATORS_DIR = DATA_PROCESSED / "indicadores"
 DEPT_FILE = INDICATORS_DIR / "indicadores_consolidados_departamentales_2024.parquet"
 MUP_FILE = INDICATORS_DIR / "indicadores_consolidados_municipales_2024.parquet"
@@ -230,7 +227,9 @@ def get_department_indicators(
     if region_id is not None:
         df = df.filter(pl.col("region_id") == region_id)
         
-    if sort_by is not None and sort_by in df.columns:
+    if sort_by is not None:
+        if sort_by not in df.columns:
+            raise HTTPException(status_code=400, detail=f"columna de ordenamiento invalida: '{sort_by}'")
         descending = (order.lower() == "desc")
         df = df.sort(sort_by, descending=descending)
     else:
@@ -294,7 +293,9 @@ def get_municipal_indicators(
     if depto_codigo is not None:
         df = df.filter(pl.col("depto_codigo") == depto_codigo)
 
-    if sort_by is not None and sort_by in df.columns:
+    if sort_by is not None:
+        if sort_by not in df.columns:
+            raise HTTPException(status_code=400, detail=f"columna de ordenamiento invalida: '{sort_by}'")
         descending = (order.lower() == "desc")
         df = df.sort(sort_by, descending=descending)
     else:
@@ -333,7 +334,8 @@ def get_methodology_catalog(
 ):
     cards = METHODOLOGY_CARDS
     if dominio is not None:
-        cards = [c for c in cards if c["dominio"].lower() == dominio.lower()]
+        term = dominio.strip().lower()
+        cards = [c for c in cards if term in c["dominio"].lower()]
 
     return MethodologyCatalogResponse(
         total_fichas=len(cards),

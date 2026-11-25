@@ -13,6 +13,7 @@ from src.core.config import (
     DEFAULT_DOWNLOAD_TIMEOUT,
     DEFAULT_HEADERS,
     DEFAULT_REQUEST_TIMEOUT,
+    PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
 )
 
@@ -22,24 +23,43 @@ DEFAULT_TIMEOUT = DEFAULT_REQUEST_TIMEOUT
 
 
 def call_ckan(action: str, timeout: int = DEFAULT_TIMEOUT, **params: Any) -> Any:
-    """Ejecutar accion contra la api ckan y validar respuesta."""
+    """Ejecutar accion contra la api ckan con reintentos ante fallos transitorios y validar respuesta."""
     url = f"{BASE_URL}/{action}"
     # limpiar parametros con valor nulo antes de enviar la peticion
     cleaned_params = {k: v for k, v in params.items() if v is not None}
-    
-    response = requests.get(
-        url,
-        params=cleaned_params,
-        headers=DEFAULT_HEADERS,
-        timeout=timeout
-    )
-    response.raise_for_status()
+
+    effective_timeout = min(timeout, 25) if action in {"package_search", "package_show", "group_list"} else timeout
+    max_attempts = 2
+    response = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.get(
+                url,
+                params=cleaned_params,
+                headers=DEFAULT_HEADERS,
+                timeout=effective_timeout
+            )
+            response.raise_for_status()
+            break
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            # no reintentar errores de cliente (ej. 400, 404)
+            if status_code is not None and status_code < 500:
+                raise
+            if attempt >= max_attempts:
+                raise
+            time.sleep(0.5 * attempt)
+        except requests.RequestException:
+            if attempt >= max_attempts:
+                raise
+            time.sleep(0.5 * attempt)
+
     payload = response.json()
-    
+
     if not payload.get("success"):
         error_detail = payload.get("error", "error desconocido en ckan")
         raise RuntimeError(f"ckan devolvio error en accion {action}: {error_detail}")
-        
+
     return payload["result"]
 
 
@@ -154,6 +174,80 @@ def get_dataset_resources(slug: str) -> List[Dict[str, Any]]:
     return resource_list
 
 
+def resolve_local_resource_path(
+    resource: Dict[str, Any],
+    base_dir: Path = RAW_DATA_DIR,
+) -> Path:
+    """Construir ruta local determinista donde se almacena un recurso de ckan."""
+    dataset_name = resource.get("dataset") or "general"
+    target_dir = base_dir / dataset_name
+
+    resource_url = resource.get("url") or ""
+    raw_filename = resource_url.rsplit("/", 1)[-1].split("?")[0] if resource_url else ""
+    if not raw_filename:
+        res_id = resource.get("id") or "recurso"
+        res_fmt = (resource.get("formato") or resource.get("format") or "bin").lower()
+        raw_filename = f"{res_id}.{res_fmt}"
+
+    return target_dir / raw_filename
+
+
+def _read_manifest_entries(base_dir: Path = RAW_DATA_DIR) -> List[Dict[str, Any]]:
+    """Leer registros de auditoria del manifiesto local si existe."""
+    manifest_file = base_dir / "manifest.jsonl"
+    if not manifest_file.exists():
+        return []
+    entries: List[Dict[str, Any]] = []
+    for line in manifest_file.read_text(encoding="utf-8").splitlines():
+        clean = line.strip()
+        if not clean:
+            continue
+        try:
+            entries.append(json.loads(clean))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def get_local_resource_status(
+    resource: Dict[str, Any],
+    base_dir: Path = RAW_DATA_DIR,
+    processed_dir: Path = PROCESSED_DATA_DIR,
+) -> Dict[str, Any]:
+    """Verificar si un recurso ya fue descargado y si cuenta con parquet procesado local."""
+    dataset_slug = resource.get("dataset") or "general"
+    local_path = resolve_local_resource_path(resource, base_dir=base_dir)
+    file_exists = local_path.exists() and local_path.is_file() and local_path.stat().st_size > 0
+    file_size = local_path.stat().st_size if file_exists else None
+
+    # revisar si el archivo en manifiesto tuvo modificacion remota respecto a la descarga previa
+    remote_modified = resource.get("last_modified") or resource.get("modificado")
+    matched = [rec for rec in _read_manifest_entries(base_dir) if rec.get("id") == resource.get("id")]
+    remote_changed = False
+    if matched and remote_modified:
+        last_known = matched[-1].get("last_modified") or matched[-1].get("modificado")
+        if last_known and last_known != remote_modified:
+            remote_changed = True
+
+    # verificar existencia de parquet procesado para este recurso
+    parquet_dir = processed_dir / "datasets" / dataset_slug
+    stem = local_path.stem
+    parquet_candidates = sorted(parquet_dir.glob(f"{stem}*.parquet")) if parquet_dir.exists() else []
+    parquet_path = parquet_candidates[0] if parquet_candidates else None
+
+    is_ready_locally = file_exists and not remote_changed
+    return {
+        "descargado_local": is_ready_locally,
+        "archivo_existe": file_exists,
+        "ruta_local": str(local_path) if file_exists else None,
+        "tamano_bytes": file_size,
+        "cambio_remoto": remote_changed if file_exists else True,
+        "requiere_descarga": not is_ready_locally,
+        "parquet_disponible": parquet_path is not None and parquet_path.exists(),
+        "ruta_parquet": str(parquet_path.relative_to(processed_dir)) if parquet_path else None,
+    }
+
+
 def download_resource_file(
     resource: Dict[str, Any],
     base_dir: Path = RAW_DATA_DIR,
@@ -161,23 +255,13 @@ def download_resource_file(
     max_retries: int = 4
 ) -> Path:
     """Descargar un recurso a disco con reintentos automaticos y anotar procedencia en manifest.jsonl."""
-    dataset_name = resource.get("dataset", "general")
-    target_dir = base_dir / dataset_name
-    target_dir.mkdir(parents=True, exist_ok=True)
-    
     resource_url = resource.get("url")
     if not resource_url:
         raise ValueError("el recurso no contiene una url valida para descarga")
-        
-    raw_filename = resource_url.rsplit("/", 1)[-1].split("?")[0]
-    # asignar un nombre por defecto si la url termina en barra diagonal
-    if not raw_filename:
-        res_id = resource.get("id", "recurso")
-        res_fmt = resource.get("formato", "bin")
-        raw_filename = f"{res_id}.{res_fmt}"
-        
-    file_path = target_dir / raw_filename
-    temp_file = target_dir / f"{raw_filename}.part"
+
+    file_path = resolve_local_resource_path(resource, base_dir=base_dir)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = file_path.parent / f"{file_path.name}.part"
     
     last_err: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import List
 from fastapi import APIRouter, HTTPException, Query
 import polars as pl
-import numpy as np
 
+from src.core.config import PROCESSED_DATA_DIR
 from src.schemas.analytics import (
     DescriptiveResponse,
     OutliersResponse,
@@ -16,7 +15,6 @@ from src.schemas.analytics import (
     CostOfLivingForecastItem,
     DemographicGrowthItem,
     VulnerabilityResponse,
-    VulnerabilityIndexItem,
 )
 
 router = APIRouter(
@@ -24,7 +22,7 @@ router = APIRouter(
     tags=["Ciencia de Datos y Análisis Estadístico"]
 )
 
-DATA_PROCESSED = Path("data/processed")
+DATA_PROCESSED = PROCESSED_DATA_DIR
 ANALYSIS_DIR = DATA_PROCESSED / "analisis"
 
 
@@ -77,9 +75,9 @@ def get_correlation_matrix(
         df = df.filter(pl.col("pearson_r").abs() >= min_abs_r)
 
     if sort_by == "pearson":
-        df = df.sort("pearson_r", descending=True)
+        df = df.sort(pl.col("pearson_r").abs(), descending=True)
     elif sort_by == "spearman":
-        df = df.sort("spearman_rho", descending=True)
+        df = df.sort(pl.col("spearman_rho").abs(), descending=True)
     else:
         df = df.sort("pearson_pvalue")
 
