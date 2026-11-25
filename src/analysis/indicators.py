@@ -1,9 +1,9 @@
-from pathlib import Path
 from typing import Optional
 import polars as pl
+from src.core.config import PROCESSED_DATA_DIR
 from src.core.geo_master import get_all_departments, normalize_department
 
-DATA_PROCESSED = Path("data/processed")
+DATA_PROCESSED = PROCESSED_DATA_DIR
 INDICATORS_DIR = DATA_PROCESSED / "indicadores"
 INDICATORS_DIR.mkdir(parents=True, exist_ok=True)
 

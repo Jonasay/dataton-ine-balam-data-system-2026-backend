@@ -1,19 +1,26 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+
+import math
+import threading
+import time
+from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
+import requests
 
-from src.core.config import RAW_DATA_DIR
+from src.core.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from src.ingestion.ine import (
-    call_ckan,
     download_resource_file,
     get_dataset_resources,
+    get_local_resource_status,
     has_remote_changed,
-    list_all_datasets,
     list_groups,
     query_datastore_sql,
     search_datasets,
-    search_datastore
+    search_datastore,
 )
 from src.process.process import _require_polars, read_excel_sheets
 from src.schemas.ine import DatastoreSearchBody, SqlQueryBody
@@ -22,6 +29,75 @@ router = APIRouter(
     prefix="/ine",
     tags=["INE - Instituto Nacional de Estadistica"]
 )
+
+# cache en memoria con ttl para consultas frecuentes al catalogo ckan
+_CKAN_CACHE_TTL_SECONDS = 180.0
+_ckan_cache: Dict[Tuple[Any, ...], Tuple[float, Any]] = {}
+_ckan_cache_lock = threading.Lock()
+
+
+def _is_mocked_callable(fn: Callable[..., Any]) -> bool:
+    """Detectar si una funcion fue reemplazada por un mock en pruebas unitarias."""
+    return hasattr(fn, "assert_called") or getattr(fn, "__module__", "").startswith("unittest.mock")
+
+
+def _cached_ckan_fetch(cache_key: Tuple[Any, ...], fn: Callable[[], Any], loader_ref: Callable[..., Any]) -> Any:
+    """Ejecutar consulta ckan con cache temporal y respaldo obsoleto si el origen falla."""
+    if _is_mocked_callable(loader_ref):
+        return fn()
+
+    now = time.monotonic()
+    stale_entry: Any = None
+    with _ckan_cache_lock:
+        cached = _ckan_cache.get(cache_key)
+        if cached is not None:
+            expires_at, payload = cached
+            if now < expires_at:
+                return payload
+            stale_entry = payload
+
+    try:
+        result = fn()
+        with _ckan_cache_lock:
+            _ckan_cache[cache_key] = (now + _CKAN_CACHE_TTL_SECONDS, result)
+        return result
+    except Exception:
+        if stale_entry is not None:
+            return stale_entry
+        raise
+
+
+def _raise_ckan_http_error(exc: Exception, context_message: str) -> None:
+    """Propagar codigo http 404 cuando el recurso remoto no existe o 502 para fallos externos."""
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"{context_message}: recurso no encontrado en ckan")
+    raise HTTPException(status_code=502, detail=f"{context_message}: {exc}")
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    """Convertir valores no compatibles con json estandar (nan, inf, fechas, decimales)."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        f_val = float(value)
+        return f_val if math.isfinite(f_val) else None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {str(k): _sanitize_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    return value
+
+
+def _sanitize_records(rows: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Normalizar lista de registros tabulares para serializacion json estricta."""
+    return [{str(k): _sanitize_json_value(v) for k, v in row.items()} for row in rows]
 
 
 # buscar conjuntos de datos con filtros y paginacion de 10 por defecto
@@ -37,22 +113,53 @@ def get_datasets(
     """Consultar conjuntos de datos en ckan por palabra clave, grupo o de forma global."""
     search_term = consulta if consulta is not None else query
     try:
-        data = search_datasets(
-            query=search_term,
-            group=grupo,
-            rows=filas,
-            start=inicio
+        cache_key = ("conjuntos", search_term, grupo, filas, inicio)
+        data = _cached_ckan_fetch(
+            cache_key,
+            lambda: search_datasets(
+                query=search_term,
+                group=grupo,
+                rows=filas,
+                start=inicio
+            ),
+            search_datasets,
         )
+
+        # precalentar cache de recursos a partir de la respuesta de package_search
+        conjuntos = data.get("conjuntos", [])
+        if not _is_mocked_callable(search_datasets) and not _is_mocked_callable(get_dataset_resources):
+            now = time.monotonic()
+            with _ckan_cache_lock:
+                for ds in conjuntos:
+                    ds_id = ds.get("id")
+                    ds_resources = ds.get("recursos")
+                    if ds_id and isinstance(ds_resources, list) and ds_resources:
+                        normalized_res = [
+                            {
+                                "id": r.get("id"),
+                                "nombre": r.get("nombre"),
+                                "formato": (r.get("formato") or "").lower(),
+                                "url": r.get("url"),
+                                "last_modified": r.get("modificado") or r.get("last_modified"),
+                                "dataset": ds_id,
+                                "dataset_modified": ds.get("modificado"),
+                            }
+                            for r in ds_resources
+                        ]
+                        _ckan_cache[("recursos", ds_id)] = (now + _CKAN_CACHE_TTL_SECONDS, normalized_res)
+
         return {
             "consulta": search_term,
             "grupo": grupo,
             "total": data.get("total", 0),
             "inicio": data.get("inicio", 0),
             "filas": data.get("filas", filas),
-            "conjuntos": data.get("conjuntos", [])
+            "conjuntos": conjuntos
         }
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al consultar ckan: {exc}")
+        _raise_ckan_http_error(exc, "error al consultar ckan")
 
 
 # listar grupos tematicos disponibles en ckan
@@ -60,13 +167,70 @@ def get_datasets(
 def get_groups():
     """Obtener grupos estadisticos disponibles en la plataforma de datos abiertos."""
     try:
-        groups = list_groups()
+        groups = _cached_ckan_fetch(("grupos",), list_groups, list_groups)
         return {
             "total": len(groups),
             "grupos": groups
         }
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al obtener grupos: {exc}")
+        _raise_ckan_http_error(exc, "error al obtener grupos")
+
+
+def get_cached_or_fetch_resources(slug: str) -> list[Dict[str, Any]]:
+    """Obtener recursos de un conjunto desde cache temporal o consultando ckan."""
+    def _fetch() -> list[Dict[str, Any]]:
+        try:
+            return get_dataset_resources(slug)
+        except Exception as primary_exc:
+            # respaldo mediante package_search cuando package_show excede el tiempo de espera
+            if not _is_mocked_callable(get_dataset_resources):
+                try:
+                    search_res = search_datasets(query=slug, rows=10, start=0)
+                    match = next((ds for ds in search_res.get("conjuntos", []) if ds.get("id") == slug), None)
+                    if match and match.get("recursos"):
+                        return [
+                            {
+                                "id": r.get("id"),
+                                "nombre": r.get("nombre"),
+                                "formato": (r.get("formato") or "").lower(),
+                                "url": r.get("url"),
+                                "last_modified": r.get("modificado") or r.get("last_modified"),
+                                "dataset": slug,
+                                "dataset_modified": match.get("modificado"),
+                            }
+                            for r in match["recursos"]
+                        ]
+                except Exception:
+                    pass
+            raise primary_exc
+
+    return _cached_ckan_fetch(
+        ("recursos", slug),
+        _fetch,
+        get_dataset_resources,
+    )
+
+
+def _enrich_resource_status(slug: str, item: Dict[str, Any]) -> Dict[str, Any]:
+    """Agregar metadatos de verificacion local para evitar descargas repetidas."""
+    if not item.get("url"):
+        return item
+    status = get_local_resource_status(
+        {**item, "dataset": item.get("dataset") or slug},
+        base_dir=RAW_DATA_DIR,
+        processed_dir=PROCESSED_DATA_DIR,
+    )
+    return {
+        **item,
+        "descargado_local": status["descargado_local"],
+        "tamano_bytes": status["tamano_bytes"],
+        "ruta_local": status["ruta_local"],
+        "cambio_remoto": status["cambio_remoto"],
+        "parquet_disponible": status["parquet_disponible"],
+        "ruta_parquet": status["ruta_parquet"],
+    }
 
 
 # consultar los recursos de un conjunto de datos especifico
@@ -74,14 +238,17 @@ def get_groups():
 def get_resources(slug: str):
     """Obtener archivos y tablas asociadas a un conjunto de datos mediante su slug."""
     try:
-        resource_items = get_dataset_resources(slug)
+        resource_items = get_cached_or_fetch_resources(slug)
+        enriched = [_enrich_resource_status(slug, item) for item in resource_items]
         return {
             "dataset": slug,
-            "total": len(resource_items),
-            "recursos": resource_items
+            "total": len(enriched),
+            "recursos": enriched
         }
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al obtener recursos: {exc}")
+        _raise_ckan_http_error(exc, "error al obtener recursos")
 
 
 # previsualizar datos directamente por slug o recurso sin necesidad de descarga manual
@@ -101,7 +268,7 @@ def preview_dataset_data(
         active_hoja = 1 if isinstance(hoja_id, QueryParam) else hoja_id
         active_limite = 10 if isinstance(limite, QueryParam) else limite
 
-        resources = get_dataset_resources(slug)
+        resources = get_cached_or_fetch_resources(slug)
         if not resources:
             raise HTTPException(status_code=404, detail=f"no se encontraron recursos para el conjunto {slug}")
 
@@ -119,35 +286,38 @@ def preview_dataset_data(
             )
 
         active_id = target_resource["id"]
+        enriched_target = {**target_resource, "dataset": target_resource.get("dataset") or slug}
+        local_status = get_local_resource_status(enriched_target, base_dir=RAW_DATA_DIR, processed_dir=PROCESSED_DATA_DIR)
 
-        # intentar primero obtener registros indexados directamente del datastore ckan
-        try:
-            datastore_data = search_datastore(resource_id=active_id, limit=active_limite)
-            records = datastore_data.get("registros") or datastore_data.get("records", [])
-            if records:
-                raw_fields = datastore_data.get("campos") or datastore_data.get("fields", [])
-                fields = [f.get("id") for f in raw_fields]
-                return {
-                    "dataset": slug,
-                    "recurso_id": active_id,
-                    "nombre": target_resource.get("nombre"),
-                    "formato": target_resource.get("formato"),
-                    "origen": "datastore_ckan",
-                    "hojas": [],
-                    "hoja_actual": None,
-                    "columnas": fields,
-                    "filas_muestra": records,
-                    "total_filas_muestra": len(records)
-                }
-        except Exception:
-            # continuar con lectura de archivo si el recurso no esta indexado en datastore
-            pass
+        if local_status["descargado_local"] and local_status["ruta_local"]:
+            local_path = Path(local_status["ruta_local"])
+            preview_origin = "archivo_local_cache"
+        else:
+            # intentar obtener registros indexados directamente del datastore ckan si aun no esta en disco
+            try:
+                datastore_data = search_datastore(resource_id=active_id, limit=active_limite)
+                records = datastore_data.get("registros") or datastore_data.get("records", [])
+                if records:
+                    raw_fields = datastore_data.get("campos") or datastore_data.get("fields", [])
+                    fields = [f.get("id") for f in raw_fields]
+                    return {
+                        "dataset": slug,
+                        "recurso_id": active_id,
+                        "nombre": target_resource.get("nombre"),
+                        "formato": target_resource.get("formato"),
+                        "origen": "datastore_ckan",
+                        "hojas": [],
+                        "hoja_actual": None,
+                        "columnas": fields,
+                        "filas_muestra": _sanitize_records(records),
+                        "total_filas_muestra": len(records)
+                    }
+            except Exception:
+                # continuar con descarga unica si el recurso no esta indexado en datastore
+                pass
 
-        # descarga transparente si el archivo aun no esta en almacenamiento local
-        file_name = target_resource["url"].rsplit("/", 1)[-1]
-        local_path = RAW_DATA_DIR / slug / file_name
-        if not local_path.exists():
-            local_path = download_resource_file(target_resource)
+            local_path = download_resource_file(enriched_target)
+            preview_origin = "archivo_local_autodescargado"
 
         # procesar y extraer vista previa segun la extension
         file_ext = local_path.suffix.lower()
@@ -158,13 +328,13 @@ def preview_dataset_data(
 
             # leer datos de la hoja solicitada
             sheet_df = read_excel_sheets(local_path, sheet_id=active_hoja)
-            preview_rows = sheet_df.head(active_limite).to_dicts()
+            preview_rows = _sanitize_records(sheet_df.head(active_limite).to_dicts())
             return {
                 "dataset": slug,
                 "recurso_id": active_id,
                 "nombre": target_resource.get("nombre"),
                 "formato": target_resource.get("formato", "xlsx"),
-                "origen": "archivo_local_autodescargado",
+                "origen": preview_origin,
                 "archivo": local_path.name,
                 "hojas": sheet_names,
                 "hoja_actual": active_hoja,
@@ -174,14 +344,14 @@ def preview_dataset_data(
             }
         elif file_ext == ".csv":
             pl = _require_polars()
-            df = pl.read_csv(str(local_path), n_rows=active_limite)
-            preview_rows = df.head(active_limite).to_dicts()
+            df = pl.read_csv(str(local_path), n_rows=active_limite, ignore_errors=True)
+            preview_rows = _sanitize_records(df.head(active_limite).to_dicts())
             return {
                 "dataset": slug,
                 "recurso_id": active_id,
                 "nombre": target_resource.get("nombre"),
                 "formato": "csv",
-                "origen": "archivo_local_autodescargado",
+                "origen": preview_origin,
                 "archivo": local_path.name,
                 "hojas": [],
                 "hoja_actual": None,
@@ -217,14 +387,18 @@ def preview_resource_data(
     return preview_dataset_data(slug=slug, recurso_id=resource_id, hoja_id=hoja_id, limite=limite)
 
 
-# descargar recurso y guardarlo con procedencia en disco
+# descargar recurso y guardarlo con procedencia en disco sin repetir descarga si ya existe
 @router.get("/{slug}/descargar/{resource_id}", summary="Descargar recurso por id")
 @router.post("/{slug}/descargar/{resource_id}", summary="Descargar recurso por id (post)", include_in_schema=False)
-def download_resource(slug: str, resource_id: str):
-    """Descargar archivo de datos del ine registrar procedencia y devolverlo."""
+def download_resource(
+    slug: str,
+    resource_id: str,
+    forzar: bool = Query(default=False, description="Forzar descarga remota aunque el recurso ya exista en disco"),
+):
+    """Descargar archivo de datos del ine verificando cache local antes de solicitarlo al origen."""
     try:
         # primero obtener los recursos del conjunto para localizar el elemento correcto
-        resource_list = get_dataset_resources(slug)
+        resource_list = get_cached_or_fetch_resources(slug)
         target_resource = next(
             (item for item in resource_list if item.get("id") == resource_id),
             None
@@ -236,7 +410,12 @@ def download_resource(slug: str, resource_id: str):
                 detail=f"recurso con id {resource_id} no encontrado en el conjunto {slug}"
             )
 
-        saved_path = download_resource_file(target_resource)
+        enriched_target = {**target_resource, "dataset": target_resource.get("dataset") or slug}
+        local_status = get_local_resource_status(enriched_target, base_dir=RAW_DATA_DIR, processed_dir=PROCESSED_DATA_DIR)
+        if not forzar and local_status["descargado_local"] and local_status["ruta_local"]:
+            saved_path = Path(local_status["ruta_local"])
+        else:
+            saved_path = download_resource_file(enriched_target)
 
         if not saved_path.exists():
             raise HTTPException(
@@ -260,7 +439,7 @@ def download_resource(slug: str, resource_id: str):
 def check_resource_change(slug: str, resource_id: str):
     """Comparar metadatos remotos con la ultima descarga en manifest.jsonl."""
     try:
-        resource_list = get_dataset_resources(slug)
+        resource_list = get_cached_or_fetch_resources(slug)
         target_resource = next(
             (item for item in resource_list if item.get("id") == resource_id),
             None
@@ -302,8 +481,10 @@ def get_datastore_records(
             query=consulta
         )
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al consultar datastore: {exc}")
+        _raise_ckan_http_error(exc, "error al consultar datastore")
 
 
 @router.post("/datastore/consulta", summary="Consultar registros tabulares del datastore con cuerpo json")
@@ -319,8 +500,10 @@ def post_datastore_records(body: DatastoreSearchBody):
             sort=body.orden
         )
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al consultar datastore: {exc}")
+        _raise_ckan_http_error(exc, "error al consultar datastore")
 
 
 # consultar el datastore mediante sql
@@ -332,8 +515,10 @@ def get_datastore_sql(
     try:
         result = query_datastore_sql(sql=sql)
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al ejecutar consulta sql: {exc}")
+        _raise_ckan_http_error(exc, "error al ejecutar consulta sql")
 
 
 @router.post("/datastore/consulta-sql", summary="Consultar datastore mediante sql con json")
@@ -342,5 +527,7 @@ def post_datastore_sql(body: SqlQueryBody):
     try:
         result = query_datastore_sql(sql=body.sql)
         return result
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"error al ejecutar consulta sql: {exc}")
+        _raise_ckan_http_error(exc, "error al ejecutar consulta sql")

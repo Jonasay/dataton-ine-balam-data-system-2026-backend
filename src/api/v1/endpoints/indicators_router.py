@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 import polars as pl
 
+from src.core.config import PROCESSED_DATA_DIR
 from src.core.geo_master import normalize_department
 from src.schemas.indicators import (
-    DepartmentIndicatorItem,
     DepartmentIndicatorsResponse,
-    MunicipalIndicatorItem,
     MunicipalIndicatorsResponse,
-    IndicatorMethodologyCard,
     MethodologyCatalogResponse,
 )
 
@@ -20,7 +17,7 @@ router = APIRouter(
     tags=["Indicadores Socioeconómicos - Sistema Oficial"]
 )
 
-DATA_PROCESSED = Path("data/processed")
+DATA_PROCESSED = PROCESSED_DATA_DIR
 INDICATORS_DIR = DATA_PROCESSED / "indicadores"
 DEPT_FILE = INDICATORS_DIR / "indicadores_consolidados_departamentales_2024.parquet"
 MUP_FILE = INDICATORS_DIR / "indicadores_consolidados_municipales_2024.parquet"
@@ -85,6 +82,34 @@ METHODOLOGY_CARDS: List[Dict[str, Any]] = [
         "limitaciones": "Asume inactividad estricta en menores de 15 años sin reflejar trabajo infantil informal."
     },
     {
+        "id_indicador": "INDICE_MASCULINIDAD",
+        "nombre": "Índice de Masculinidad",
+        "dominio": "Demografía",
+        "objetivo": "Evaluar el equilibrio numérico entre hombres y mujeres en la estructura poblacional territorial.",
+        "formula": "(Población Masculina / Población Femenina) * 100",
+        "variables_requeridas": ["hombres_total", "mujeres_total", "indice_masculinidad"],
+        "fuente": "INE - Estimaciones y Proyecciones de Población 2015-2030",
+        "unidad_medida": "Hombres por cada 100 mujeres",
+        "nivel_agregacion": "Departamental y Municipal",
+        "periodicidad": "Anual",
+        "interpretacion": "Valores menores a 100 evidencian predominio femenino asociado a longevidad y emigración masculina.",
+        "limitaciones": "Las proyecciones suavizan el impacto migratorio coyuntural reciente."
+    },
+    {
+        "id_indicador": "ESTRUCTURA_ETARIA",
+        "nombre": "Estructura Poblacional por Grandes Grupos Etarios",
+        "dominio": "Demografía",
+        "objetivo": "Analizar la distribución porcentual de niñez (<15), edad productiva (15-64) y adulto mayor (65+).",
+        "formula": "(Población Grupo Etario / Población Total) * 100",
+        "variables_requeridas": ["pct_poblacion_menor_15", "pct_poblacion_15_64", "pct_poblacion_65_mas"],
+        "fuente": "INE - Estimaciones y Proyecciones de Población por Edad (2015-2030)",
+        "unidad_medida": "Porcentaje (%)",
+        "nivel_agregacion": "Departamental y Municipal",
+        "periodicidad": "Anual",
+        "interpretacion": "Permite identificar territorios en fase joven o en transición hacia el bono demográfico.",
+        "limitaciones": "Basado en supuestos de supervivencia y fecundidad del Censo 2018."
+    },
+    {
         "id_indicador": "NECROPSIAS",
         "nombre": "Tasa de Necropsias Médico-Legales INACIF",
         "dominio": "Seguridad y Violencia",
@@ -127,6 +152,20 @@ METHODOLOGY_CARDS: List[Dict[str, Any]] = [
         "limitaciones": "Registra fallecidos en el lugar del hecho; excluye decesos hospitalarios tardíos."
     },
     {
+        "id_indicador": "SEVERIDAD_VIAL",
+        "nombre": "Índice de Severidad Vial",
+        "dominio": "Movilidad y Transporte",
+        "objetivo": "Medir la proporción de víctimas fatales sobre el total de víctimas en accidentes de tránsito.",
+        "formula": "(Fallecidos Viales / Total Víctimas Viales) * 100",
+        "variables_requeridas": ["fallecidos_viales_total", "victimas_viales_total"],
+        "fuente": "PNC / Departamento de Tránsito / INE - Siniestralidad Vial 2024",
+        "unidad_medida": "Porcentaje (%)",
+        "nivel_agregacion": "Departamental y Municipal",
+        "periodicidad": "Anual",
+        "interpretacion": "Refleja la letalidad proporcional en rutas interurbanas y velocidad de circulación.",
+        "limitaciones": "Siniestros leves sin intervención policial generan subregistro en el denominador."
+    },
+    {
         "id_indicador": "RETORNO_MIGRATORIO",
         "nombre": "Tasa de Retorno Migratorio",
         "dominio": "Migración",
@@ -153,6 +192,20 @@ METHODOLOGY_CARDS: List[Dict[str, Any]] = [
         "periodicidad": "Anual",
         "interpretacion": "Indica migración de grupos familiares y menores no acompañados hacia el norte.",
         "limitaciones": "Depende de la veracidad y verificación de edad por autoridades migratorias emisoras."
+    },
+    {
+        "id_indicador": "MUJERES_MIGRANTES",
+        "nombre": "Proporción de Mujeres Retornadas",
+        "dominio": "Migración",
+        "objetivo": "Cuantificar la participación femenina en los flujos de población migrante retornada.",
+        "formula": "(Retornadas Mujeres / Total Retornados) * 100",
+        "variables_requeridas": ["retornados_mujeres", "retornados_total", "pct_retornadas_mujeres"],
+        "fuente": "IGM / INE - Microdatos Retornados 2024",
+        "unidad_medida": "Porcentaje (%)",
+        "nivel_agregacion": "Departamental",
+        "periodicidad": "Anual",
+        "interpretacion": "Visibiliza la feminización y composición familiar de la migración irregular reciente.",
+        "limitaciones": "Mide únicamente retornos oficiales registrados por autoridades migratorias."
     },
     {
         "id_indicador": "MATRICULA_SUPERIOR",
@@ -197,6 +250,20 @@ METHODOLOGY_CARDS: List[Dict[str, Any]] = [
         "limitaciones": "No desagrega índices de precios independientes para cada municipio rural."
     },
     {
+        "id_indicador": "PERDIDA_PODER_ADQUISITIVO",
+        "nombre": "Pérdida del Poder Adquisitivo del Quetzal",
+        "dominio": "Economía",
+        "objetivo": "Cuantificar la erosión acumulada del valor real de Q 1.00 frente al período base oficial.",
+        "formula": "1.00 - (100 / IPC_actual)",
+        "variables_requeridas": ["perdida_poder_adquisitivo_quetzal", "indice_ipc_regional"],
+        "fuente": "INE - Estadísticas de Pérdida y Poder Adquisitivo del Quetzal (Base Dic 2023)",
+        "unidad_medida": "Quetzales perdidos por cada Q 1.00",
+        "nivel_agregacion": "Nacional",
+        "periodicidad": "Mensual",
+        "interpretacion": "Mide el deterioro real en la capacidad de compra de ingresos nominales no indexados.",
+        "limitaciones": "Indicador de agregación nacional; no refleja variaciones crediticias locales."
+    },
+    {
         "id_indicador": "BRECHA_CBA",
         "nombre": "Brecha Urbano-Rural de la Canasta Básica Alimentaria",
         "dominio": "Economía",
@@ -230,7 +297,9 @@ def get_department_indicators(
     if region_id is not None:
         df = df.filter(pl.col("region_id") == region_id)
         
-    if sort_by is not None and sort_by in df.columns:
+    if sort_by is not None:
+        if sort_by not in df.columns:
+            raise HTTPException(status_code=400, detail=f"columna de ordenamiento invalida: '{sort_by}'")
         descending = (order.lower() == "desc")
         df = df.sort(sort_by, descending=descending)
     else:
@@ -294,7 +363,9 @@ def get_municipal_indicators(
     if depto_codigo is not None:
         df = df.filter(pl.col("depto_codigo") == depto_codigo)
 
-    if sort_by is not None and sort_by in df.columns:
+    if sort_by is not None:
+        if sort_by not in df.columns:
+            raise HTTPException(status_code=400, detail=f"columna de ordenamiento invalida: '{sort_by}'")
         descending = (order.lower() == "desc")
         df = df.sort(sort_by, descending=descending)
     else:
@@ -333,7 +404,8 @@ def get_methodology_catalog(
 ):
     cards = METHODOLOGY_CARDS
     if dominio is not None:
-        cards = [c for c in cards if c["dominio"].lower() == dominio.lower()]
+        term = dominio.strip().lower()
+        cards = [c for c in cards if term in c["dominio"].lower()]
 
     return MethodologyCatalogResponse(
         total_fichas=len(cards),

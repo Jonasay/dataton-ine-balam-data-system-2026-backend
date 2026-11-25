@@ -93,12 +93,13 @@ def test_maps_3d_relief_and_portal_endpoints():
     assert "62.09" in r_deck.text
 
 
-def test_3d_model_export_and_blender_route(tmp_path):
-    # validar exportacion glb real y ruta de renderizado blender
+def test_3d_model_export_and_blender_route(tmp_path, monkeypatch):
+    # validar exportacion glb real y ruta de renderizado blender en directorio aislado
     r_glb = client.get("/api/v1/visualizaciones/mapa/modelo-3d?indicador=tasa_retorno_migratorio_por_10k&formato=glb")
     assert r_glb.status_code == 200
     assert r_glb.content.startswith(b"glTF")
 
+    monkeypatch.setattr("src.api.v1.endpoints.visualizations_router.PROCESSED_DATA_DIR", tmp_path)
     with patch("src.api.v1.endpoints.visualizations_router.render_guatemala_with_blender") as mock_render:
         def fake_png(*args, **kwargs):
             out_p = Path(kwargs["output_png_path"])
