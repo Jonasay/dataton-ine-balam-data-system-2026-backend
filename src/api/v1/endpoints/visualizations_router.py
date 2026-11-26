@@ -396,7 +396,7 @@ def get_department_ranking_bars(
     regenerar: bool = Query(default=False),
 ):
     try:
-        cache_key = f"barras_depto_{indicador}_{top_n}_{orden}_{orientacion}_{color_por}"
+        cache_key = f"barras_depto_v2_{indicador}_{top_n}_{orden}_{orientacion}_{color_por}"
         res = get_or_build_chart(
             cache_key,
             formato,
@@ -422,7 +422,7 @@ def get_municipal_ranking_bars(
 ):
     try:
         depto_tag = str(depto_codigo) if depto_codigo is not None else "all"
-        cache_key = f"barras_muni_{indicador}_{depto_tag}_{top_n}"
+        cache_key = f"barras_muni_v2_{indicador}_{depto_tag}_{top_n}"
         res = get_or_build_chart(
             cache_key,
             formato,

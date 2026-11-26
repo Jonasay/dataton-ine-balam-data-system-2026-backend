@@ -19,7 +19,11 @@ class AISearchSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     gemini_api_key: Optional[SecretStr] = Field(default=None)
-    gemini_model: str = Field(default="gemini-2.5-flash", min_length=3, max_length=100)
+    gemini_model: str = Field(default="gemini-3.1-flash-lite", min_length=3, max_length=100)
+    gemini_fallback_models: tuple[str, ...] = Field(
+        default=("gemini-3.5-flash-lite", "gemini-3.8-flash"),
+    )
+    gemini_timeout_ms: int = Field(default=20000, ge=2000, le=120000)
     cache_ttl_seconds: int = Field(default=300, ge=1, le=86400)
     cache_maxsize: int = Field(default=256, ge=1, le=10000)
     rate_limit: str = Field(default="15/minute")
@@ -54,9 +58,17 @@ def get_ai_search_settings() -> AISearchSettings:
     raw_key = os.getenv("GEMINI_API_KEY")
     secret_key = SecretStr(raw_key.strip()) if raw_key and raw_key.strip() else None
 
+    raw_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS")
+    if raw_fallbacks and raw_fallbacks.strip():
+        fallbacks = tuple(m.strip() for m in raw_fallbacks.split(",") if m.strip())
+    else:
+        fallbacks = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
+
     return AISearchSettings(
         gemini_api_key=secret_key,
-        gemini_model=_env_or_default("GEMINI_MODEL", "gemini-2.5-flash"),
+        gemini_model=_env_or_default("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        gemini_fallback_models=fallbacks,
+        gemini_timeout_ms=_env_int_or_default("GEMINI_TIMEOUT_MS", 20000),
         cache_ttl_seconds=_env_int_or_default("AI_SEARCH_CACHE_TTL_SECONDS", 300),
         cache_maxsize=_env_int_or_default("AI_SEARCH_CACHE_MAXSIZE", 256),
         rate_limit=_env_or_default("AI_SEARCH_RATE_LIMIT", "15/minute"),

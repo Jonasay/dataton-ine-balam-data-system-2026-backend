@@ -13,6 +13,7 @@ from scipy import stats
 
 from src.core.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from src.core.geo_master import DEPARTAMENTOS_INE, ensure_guatemala_geojson
+from src.core.human_labels import INTEGER_METRIC_COLUMNS, humanize_label
 
 DATA_PROCESSED = PROCESSED_DATA_DIR
 INDICATORS_DIR = DATA_PROCESSED / "indicadores"
@@ -243,19 +244,35 @@ def _serialize_figure(
 ) -> Union[Dict[str, Any], str]:
     # unificar salida en especificacion json serializable o pagina html interactiva
     if output_format.lower().strip() == "html":
-        raw_html = fig.to_html(
-            full_html=True,
-            include_plotlyjs="cdn",
-            default_width="100%",
-            default_height="100vh",
-            config={"responsive": True, "displaylogo": False},
-        )
-        full_bleed_css = (
-            "<style>"
-            "html, body { margin: 0; padding: 0; background: #0b1120; width: 100%; height: 100%; overflow: hidden; }"
-            ".plotly-graph-div { width: 100% !important; height: 100vh !important; }"
-            "</style>"
-        )
+        if chart_type in {"bar", "bar_municipal"}:
+            fig_h = int(fig.layout.height or 680)
+            raw_html = fig.to_html(
+                full_html=True,
+                include_plotlyjs="cdn",
+                default_width="100%",
+                default_height=f"{fig_h}px",
+                config={"responsive": True, "displaylogo": False},
+            )
+            full_bleed_css = (
+                "<style>"
+                "html, body { margin: 0; padding: 0; background: #0b1120; width: 100%; min-height: 100%; overflow-x: hidden; overflow-y: auto; }"
+                f".plotly-graph-div {{ width: 100% !important; height: {fig_h}px !important; }}"
+                "</style>"
+            )
+        else:
+            raw_html = fig.to_html(
+                full_html=True,
+                include_plotlyjs="cdn",
+                default_width="100%",
+                default_height="100vh",
+                config={"responsive": True, "displaylogo": False},
+            )
+            full_bleed_css = (
+                "<style>"
+                "html, body { margin: 0; padding: 0; background: #0b1120; width: 100%; height: 100%; overflow: hidden; }"
+                ".plotly-graph-div { width: 100% !important; height: 100vh !important; }"
+                "</style>"
+            )
         if "</head>" in raw_html:
             return raw_html.replace("</head>", f"{full_bleed_css}</head>")
         return full_bleed_css + raw_html
@@ -667,11 +684,24 @@ def build_department_ranking_bar_chart(
     if orientation == "h":
         sorted_df = sorted_df.iloc[::-1]
 
+    is_int_metric = indicator in INTEGER_METRIC_COLUMNS
+    text_tpl = "%{text:,.0f}" if is_int_metric else "%{text:,.2f}"
     national_mean = float(pdf[indicator].mean())
+    mean_txt = f"{national_mean:,.0f}" if is_int_metric else f"{national_mean:,.2f}"
+
     active_color = color_by if color_by in sorted_df.columns else "nivel_vulnerabilidad"
+    legend_title = humanize_label(active_color)
     color_map = VULN_COLOR_MAP if active_color == "nivel_vulnerabilidad" else (
         CLUSTER_COLOR_MAP if active_color == "cluster_nombre" else None
     )
+
+    n_bars = len(sorted_df)
+    dyn_height = (max(680, 152 + n_bars * 24) if n_bars >= 20 else max(420, 180 + n_bars * 26)) if orientation == "h" else 520
+
+    max_val = float(sorted_df[indicator].max()) if n_bars > 0 else 1.0
+    min_val = float(sorted_df[indicator].min()) if n_bars > 0 else 0.0
+    axis_low = min(0.0, min_val * 1.18)
+    axis_high = max(max_val, national_mean) * 1.18 if max(max_val, national_mean) > 0 else 1.0
 
     if orientation == "h":
         fig = px.bar(
@@ -683,14 +713,23 @@ def build_department_ranking_bar_chart(
             color_discrete_map=color_map,
             text=indicator,
             hover_data={"region_nombre": True, "poblacion_total": ":,", "indice_vulnerabilidad_ivst": ":.2f"},
-            labels={indicator: meta["unidad"], "depto_nombre": "Departamento"},
+            labels={indicator: meta["unidad"], "depto_nombre": "Departamento", active_color: legend_title},
         )
         fig.add_vline(
             x=national_mean,
             line_dash="dash",
             line_color="#38bdf8",
-            annotation_text=f"Media Nacional: {national_mean:,.2f}",
-            annotation_position="top right",
+            line_width=1.8,
+        )
+        fig.add_annotation(
+            x=national_mean,
+            xref="x",
+            y=1.04,
+            yref="paper",
+            yanchor="bottom",
+            showarrow=False,
+            text=f"Media Nacional: {mean_txt}",
+            font=dict(color="#38bdf8", size=11),
         )
     else:
         fig = px.bar(
@@ -701,19 +740,30 @@ def build_department_ranking_bar_chart(
             color_discrete_map=color_map,
             text=indicator,
             hover_data={"region_nombre": True, "poblacion_total": ":,", "indice_vulnerabilidad_ivst": ":.2f"},
-            labels={indicator: meta["unidad"], "depto_nombre": "Departamento"},
+            labels={indicator: meta["unidad"], "depto_nombre": "Departamento", active_color: legend_title},
         )
         fig.add_hline(
             y=national_mean,
             line_dash="dash",
             line_color="#38bdf8",
-            annotation_text=f"Media Nacional: {national_mean:,.2f}",
+            annotation_text=f"Media Nacional: {mean_txt}",
         )
 
-    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+    fig.update_traces(texttemplate=text_tpl, textposition="outside", cliponaxis=False)
     title = f"Ranking Departamental: {meta['titulo']}"
-    subtitle = f"Comparativa territorial ({len(sorted_df)} departamentos) | Unidad: {meta['unidad']}"
-    _apply_standard_layout(fig, title, subtitle, height=620 if orientation == "h" else 520)
+    subtitle = f"Comparativa territorial ({n_bars} departamentos) | Unidad: {meta['unidad']}"
+    _apply_standard_layout(fig, title, subtitle, height=dyn_height)
+
+    if orientation == "h":
+        y_order = "total descending" if ascending else "total ascending"
+        fig.update_layout(
+            margin=dict(l=65, r=110, t=90, b=55),
+            legend_title_text=legend_title,
+            xaxis=dict(range=[axis_low, axis_high]),
+            yaxis=dict(categoryorder=y_order, automargin=True),
+        )
+    else:
+        fig.update_layout(legend_title_text=legend_title)
 
     summary = {
         "indicador": indicator,
@@ -747,6 +797,13 @@ def build_municipal_ranking_bar_chart(
     top_df = pdf.sort_values(indicator, ascending=False).head(top_n).iloc[::-1]
     meta = get_indicator_meta(indicator)
 
+    is_int_metric = indicator in INTEGER_METRIC_COLUMNS
+    text_tpl = "%{text:,.0f}" if is_int_metric else "%{text:,.2f}"
+    n_bars = len(top_df)
+    dyn_height = max(680, 152 + n_bars * 24) if n_bars >= 20 else max(420, 180 + n_bars * 26)
+    max_val = float(top_df[indicator].max()) if n_bars > 0 else 1.0
+    min_val = float(top_df[indicator].min()) if n_bars > 0 else 0.0
+
     fig = px.bar(
         top_df,
         x=indicator,
@@ -755,14 +812,20 @@ def build_municipal_ranking_bar_chart(
         color="depto_nombre",
         text=indicator,
         hover_data={"poblacion_total": ":,", "mupio_codigo_str": True},
-        labels={indicator: meta["unidad"], "etiqueta_muni": "Municipio (Código INE)"},
+        labels={indicator: meta["unidad"], "etiqueta_muni": "Municipio (Código INE)", "depto_nombre": "Departamento"},
     )
-    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+    fig.update_traces(texttemplate=text_tpl, textposition="outside", cliponaxis=False)
 
     scope_txt = DEPARTAMENTOS_INE[depto_codigo]["nombre"] if depto_codigo in DEPARTAMENTOS_INE else "República de Guatemala"
-    title = f"Top {len(top_df)} Municipios: {meta['titulo']} ({scope_txt})"
+    title = f"Top {n_bars} Municipios: {meta['titulo']} ({scope_txt})"
     subtitle = "Desagregación local sobre los 340 municipios oficiales con denominador demográfico INE"
-    _apply_standard_layout(fig, title, subtitle, height=640)
+    _apply_standard_layout(fig, title, subtitle, height=dyn_height)
+    fig.update_layout(
+        margin=dict(l=70, r=110, t=90, b=55),
+        legend_title_text="Departamento",
+        xaxis=dict(range=[min(0.0, min_val * 1.18), max_val * 1.18 if max_val > 0 else 1.0]),
+        yaxis=dict(categoryorder="total ascending", automargin=True),
+    )
 
     return _serialize_figure(
         fig,

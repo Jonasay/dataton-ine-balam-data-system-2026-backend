@@ -15,6 +15,13 @@ IntentType = Literal[
     "fuera_de_dominio",
 ]
 
+QuerySubtype = Literal[
+    "estandar",
+    "multi_consulta",
+    "relacion_bivariada",
+    "respuesta_parcial",
+]
+
 DatasetId = Literal[
     "indicadores_departamentales",
     "indicadores_municipales",
@@ -147,6 +154,7 @@ VisualizationKind = Literal[
     "trayectoria_demografica_3d",
     "trayectoria_costo_vida_3d",
     "heatmap_correlaciones",
+    "dispersion_bivariada",
     "radar_departamental",
 ]
 
@@ -186,19 +194,41 @@ class AISearchRequest(BaseModel):
 class AISearchRoutingPlan(BaseModel):
     """Contrato interno estricto (Structured Output) devuelto por Gemini para enrutar la consulta."""
 
-    model_config = ConfigDict(extra="forbid")
-
     tipo_intencion: IntentType = Field(
         ...,
         description=(
-            "Clasificacion estricta: 'consulta_estadistica' para estadisticas agregadas disponibles; "
+            "Clasificacion estricta: 'consulta_estadistica' cuando al menos un indicador solicitado existe en el portal; "
             "'bloqueo_privacidad' si pregunta por una persona, nombre propio, DPI, direccion o caso individual; "
-            "'fuera_de_dominio' para temas ajenos (deportes, politica, clima, noticias o indicadores inexistentes)."
+            "'fuera_de_dominio' UNICAMENTE cuando NINGUN tema de la pregunta existe en el portal."
+        ),
+    )
+    subtipo_consulta: QuerySubtype = Field(
+        default="estandar",
+        description=(
+            "Modalidad analitica: 'estandar' para una consulta habitual; "
+            "'multi_consulta' cuando el usuario hace 2 preguntas independientes sobre indicadores distintos (sin pedir correlacion); "
+            "'relacion_bivariada' cuando pregunta si un indicador disponible tiene relacion/correlacion con otro(s) indicador(es) disponible(s); "
+            "'respuesta_parcial' cuando menciona un tema que NO existe (ej. desempleo, pobreza monetaria, desnutricion) junto con otro que SI existe."
         ),
     )
     conjunto_datos: Optional[DatasetId] = Field(
         default=None,
-        description="Dataset agregado a consultar cuando tipo_intencion es 'consulta_estadistica'.",
+        description="Dataset agregado fijo a consultar cuando tipo_intencion es 'consulta_estadistica'.",
+    )
+    conjunto_dinamico_slug: Optional[str] = Field(
+        default=None,
+        description=(
+            "Slug de un conjunto adicional ya procesado en el catalogo local cuando la pregunta corresponde "
+            "a uno de los conjuntos dinamicos disponibles (ej. 'educacion-superior-graduados') y no a conjunto_datos fijo."
+        ),
+    )
+    conjunto_dinamico_archivo: Optional[str] = Field(
+        default=None,
+        description="Nombre base del archivo dentro del conjunto dinamico (ej. anio especifico), si aplica.",
+    )
+    agrupar_por_dinamico: Optional[str] = Field(
+        default=None,
+        description="Columna categorica del conjunto dinamico para desglosar el conteo agregado (ej. Depto, Sexo, Sector, Facultad, Carrera, Nivel_Edu).",
     )
     columnas_metricas: List[AllowedColumn] = Field(
         default_factory=list,
@@ -261,6 +291,14 @@ class AISearchRoutingPlan(BaseModel):
     mensaje_contextual: Optional[str] = Field(
         default=None,
         description="Resumen breve, objetivo y amable en espanol describiendo que muestran las cifras consultadas.",
+    )
+    indicador_no_disponible: Optional[str] = Field(
+        default=None,
+        description=(
+            "Cuando tipo_intencion es 'fuera_de_dominio' porque se solicita un indicador estadistico ausente "
+            "en el portal (ej. 'desempleo', 'salario mínimo', 'PIB'), nombre corto en espanol de ese tema faltante; "
+            "null cuando sea un tema ajeno no estadistico (deportes, farandula, etc.)."
+        ),
     )
 
 
