@@ -46,3 +46,6 @@ RAW_DATA_DIR: Path = _resolve_project_path(_env_str("RAW_DATA_PATH", "data/raw")
 PROCESSED_DATA_DIR: Path = _resolve_project_path(_env_str("PROCESSED_DATA_PATH", "data/processed"))
 DEFAULT_USER_AGENT: str = _env_str("USER_AGENT", "datathon-ine-2026 (equipo: balam-data-systems)")
 DEFAULT_HEADERS: dict[str, str] = {"User-Agent": DEFAULT_USER_AGENT}
+
+# clave de api para integraciones opcionales con gemini tomada solo desde entorno
+GEMINI_API_KEY: str = _env_str("GEMINI_API_KEY", "")
