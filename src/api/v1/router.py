@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from src.api.v1.endpoints import (
+    ai_search_router,
     ine_router,
     process_router,
     indicators_router,
@@ -16,3 +17,4 @@ api_router.include_router(process_router.router)
 api_router.include_router(indicators_router.router)
 api_router.include_router(analytics_router.router)
 api_router.include_router(visualizations_router.router)
+api_router.include_router(ai_search_router.router)

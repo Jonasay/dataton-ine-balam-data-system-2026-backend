@@ -5,9 +5,7 @@
 [![Apache Parquet](https://img.shields.io/badge/Formato-Apache_Parquet-4B8BBE.svg?style=flat-square)](./docs/ARQUITECTURA_Y_ENDPOINTS.md)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat-square)](#65-despliegue-con-docker-y-docker-compose)
 
-API REST y motor de ingeniería, analítica estadística y visualización geoespacial para el **SISTEMA DE ANÁLISIS SOCIOECONÓMICO, DEMOGRÁFICO Y VULNERABILIDAD TERRITORIAL DE GUATEMALA**, construido sobre los datos abiertos oficiales del **Instituto Nacional de Estadística (INE)**.
-
----
+API REST y motor de ingeniería, analítica estadística, visualización geoespacial y búsqueda inteligente en lenguaje natural (**Text-to-JSON**) para el **SISTEMA DE ANÁLISIS SOCIOECONÓMICO, DEMOGRÁFICO Y VULNERABILIDAD TERRITORIAL DE GUATEMALA**, construido sobre los datos abiertos oficiales del **Instituto Nacional de Estadística (INE)**.
 
 ## Tabla de Contenidos
 
@@ -37,11 +35,11 @@ Para mantener esta guía enfocada en el levantamiento y operación general del s
 
 ## 2. Descripción del Proyecto
 
-**Balam Data Systems — Backend** el equipo centralizo la ingesta, limpieza, modelado estadístico y exposición vía REST de registros administrativos, proyecciones demográficas y series económicas del INE de Guatemala.
+**Balam Data Systems — Backend** centraliza la ingesta, limpieza, modelado estadístico, exposición vía REST y consulta inteligente asistida por IA de registros administrativos, proyecciones demográficas y series económicas del INE de Guatemala.
 
 ### Propósito principal
 
-Proveer un servidor desacoplado de alto rendimiento capaz de consultar microdatos en formato columnar **Apache Parquet** en milisegundos, ejecutar modelos multivariados de ciencia de datos, renderizar cartografía 2D/3D y servir directamente los datos al frontend institucional y a herramientas externas.
+Proveer un servidor desacoplado de alto rendimiento capaz de consultar microdatos en formato columnar **Apache Parquet** en milisegundos, ejecutar modelos multivariados de ciencia de datos, renderizar cartografía 2D/3D, responder preguntas ciudadanas en lenguaje natural con privacidad por diseño y servir directamente los datos al frontend institucional y a herramientas externas.
 
 ### Problemas que resuelve
 
@@ -49,6 +47,7 @@ Proveer un servidor desacoplado de alto rendimiento capaz de consultar microdato
 - **Estandarización geoespacial oficial**: normalización fonética y numérica de los 22 departamentos (códigos `01`–`22`, ISO 3166-2 `GT-XX`), los 340 municipios y las 8 regiones SEGEPLAN.
 - **Construcción de indicadores con denominadores reales**: cálculo de 39 indicadores departamentales y 24 indicadores municipales cruzando eventos vitales, INACIF, PNC, IGM, IPC, CBA y educación superior contra proyecciones oficiales de población 2015–2030.
 - **Analítica inferencial y vulnerabilidad territorial**: estadísticas descriptivas, detección de atípicos (`Z-score` / `IQR`), matriz de correlaciones (Pearson/Spearman), Componentes Principales (PCA), conglomerados K-Means, proyecciones MCO de Canasta Básica y cálculo del Índice de Vulnerabilidad Socioeconómica Territorial (IVST).
+- **Búsqueda estadística inteligente con IA (`POST /api/v1/busqueda-ia`)**: traducción estructurada *Text-to-JSON* en modo estricto de solo lectura (`polars.scan_parquet`), con soporte para multi-consulta, correlación bivariada con gráfica de dispersión, respuesta parcial informada, bloqueo determinista de datos personales (PII), caché en memoria (`TTLCache`) y límite de tasa por IP (`SlowAPI`).
 - **Visualizaciones 2D/3D y exportación física**: generación de gráficas Plotly HTML/JSON, mapas coropléticos Folium/Plotly, relieves volumétricos Deck.gl, mallas 3D descargables (`.STL`, `.OBJ`, `.GLB`) y renderizados en Blender headless (`.PNG`).
 
 ---
@@ -70,6 +69,7 @@ El backend sigue una arquitectura modular por dominios sobre **FastAPI** combina
 |  - /api/v1/indicadores/*     (Matrices departamentales, municipales y fichas)|
 |  - /api/v1/analisis/*        (Descriptivo, outliers, PCA, K-Means, IVST)    |
 |  - /api/v1/visualizaciones/* (20+ vistas 2D/3D, Deck.gl, modelos y Blender) |
+|  - /api/v1/busqueda-ia       (Consulta inteligente Text-to-JSON segura)     |
 +--------------------------------------+--------------------------------------+
                                        | Polars / DuckDB / GeoPandas / Trimesh
                                        v
@@ -87,11 +87,11 @@ Para la especificación completa de arquitectura, flujo de servidores y referenc
 
 ## 4. Estructura del Proyecto
 
-**Es importante resaltar que el renderizado en Blender es opcional y que se ofrece alternativas para la visualización 3D y descargas en otro formato sin la necesidad de usar esta herramienta**
+**Es importante resaltar que el renderizado en Blender es opcional y que se ofrecen alternativas para la visualización 3D y descargas en otro formato sin la necesidad de usar esta herramienta.**
 
 ```text
 dataton-ine-balam-data-system-2026-backend/
-├── main.py                                    # Punto de entrada FastAPI, CORS, Scalar y enrutadores
+├── main.py                                    # Punto de entrada FastAPI, CORS, Rate Limiter, Scalar y enrutadores
 ├── requirements.txt                           # Dependencias fijadas para Python 3.12
 ├── .env.example                               # Plantilla de variables de entorno
 ├── Dockerfile                                 # Imagen Python 3.12 + Blender headless
@@ -104,13 +104,21 @@ dataton-ine-balam-data-system-2026-backend/
 │   ├── EQUIPO.md                              # Equipo de desarrollo y roles
 │   └── ERRORES_Y_SOLUCIONES.md                # Resolución de fallos comunes al levantar el sistema
 ├── scripts/
-│   ├── run_etl_indicators.py                  # Descarga crudos, ejecuta ETL e indicadores 2024 o los mas recientes
+│   ├── run_etl_indicators.py                  # Descarga crudos, ejecuta ETL e indicadores 2024 o los más recientes
 │   ├── run_data_science.py                    # Ejecuta análisis estadístico y preconstruye caché visual
 │   └── blender_render_guatemala.py            # Script ejecutado por Blender para iluminación PNG
 ├── src/
 │   ├── core/
 │   │   ├── config.py                          # Resolución de rutas respecto a BACKEND_ROOT y .env
+│   │   ├── ai_config.py                       # Configuración validada del buscador IA (SecretStr, TTL, rate limit)
+│   │   ├── human_labels.py                    # Diccionario centralizado de etiquetas legibles en español
 │   │   └── geo_master.py                      # Catálogo oficial de 22 departamentos, regiones y GeoJSON
+│   ├── repositories/
+│   │   └── statistics_repository.py           # Acceso en modo solo lectura sobre Parquet para el buscador IA
+│   ├── services/
+│   │   ├── query_cache.py                     # Caché en memoria con TTL y normalización de consultas
+│   │   ├── gemini_client.py                   # Cliente Google GenAI con esquema estructurado y modelos de respaldo
+│   │   └── ai_search_service.py               # Orquestador del buscador IA, privacidad y análisis cruzado
 │   ├── ingestion/
 │   │   └── ine.py                             # Cliente CKAN INE, descarga atómica, manifest y Datastore
 │   ├── process/
@@ -124,6 +132,7 @@ dataton-ine-balam-data-system-2026-backend/
 │   │   ├── dataset_explorer.py                # Auto-conversión Parquet y gráficas para cualquier recurso INE
 │   │   └── visualizations.py                  # Generadores Plotly 2D/3D y caché visual en disco
 │   ├── schemas/                               # Contratos de entrada/salida en Pydantic v2
+│   │   ├── ai_search.py
 │   │   ├── ine.py
 │   │   ├── process.py
 │   │   ├── indicators.py
@@ -133,12 +142,14 @@ dataton-ine-balam-data-system-2026-backend/
 │       └── v1/
 │           ├── router.py                      # Enrutador maestro /api/v1
 │           └── endpoints/
+│               ├── ai_search_router.py        # Endpoints buscador IA /api/v1/busqueda-ia*
 │               ├── ine_router.py              # Endpoints CKAN /api/v1/ine/*
 │               ├── process_router.py          # Endpoints procesamiento /api/v1/proceso/*
 │               ├── indicators_router.py       # Endpoints indicadores /api/v1/indicadores/*
 │               ├── analytics_router.py        # Endpoints ciencia de datos /api/v1/analisis/*
 │               └── visualizations_router.py   # Endpoints visuales 2D/3D /api/v1/visualizaciones/*
 ├── test/                                      # Suite automatizada en pytest
+│   ├── test_ai_search.py
 │   ├── test_ine.py
 │   ├── test_process.py
 │   ├── test_visualizations.py
@@ -166,6 +177,7 @@ dataton-ine-balam-data-system-2026-backend/
 ```bash
 git clone https://github.com/Jonasay/dataton-ine-balam-data-system-2026-backend.git
 cd dataton-ine-balam-data-system-2026-backend
+git checkout develop
 ```
 
 #### Opción recomendada con entorno virtual estándar (`venv`)
@@ -196,7 +208,7 @@ uv pip install -r requirements.txt
 
 ### 6.2. Configurar variables de entorno
 
-Copia la plantilla `.env.example` y asigna los valores de configuración (especialmente `PORT` si usarás Docker Compose):
+Copia la plantilla `.env.example` y asigna los valores de configuración (especialmente `PORT` si usarás Docker Compose y `GEMINI_API_KEY` para habilitar el buscador con IA):
 
 ```bash
 cp .env.example .env
@@ -251,6 +263,8 @@ Una vez iniciado, verifica el estado de salud en:
 
 ### 6.5. Despliegue con Docker y Docker Compose
 
+***NOTA: SI SE USARA DOCKER COMPOSE PARA DESPLEGAR ES IMPORTANTE ESPERAR UNOS SEGUNDOS PARA QUE EL FRONTEND PUEDA RECONCOER AL BACKEND EXPUESTO EN EL DOCKER***
+
 El `Dockerfile` construye la imagen con Python 3.12, dependencias compiladas y Blender headless incluido, y al arrancar ejecuta automáticamente `run_etl_indicators.py`, `run_data_science.py` y `uvicorn`:
 
 1. Asegúrate de tener `.env` configurado con `PORT=8000`.
@@ -278,9 +292,9 @@ docker compose -f docker-compose.blender.yml run --rm blender \
 
 ## 7. Variables de Entorno
 
-Definidas en `src/core/config.py` y declaradas en `.env.example`. Todas las rutas relativas se resuelven automáticamente respecto a `BACKEND_ROOT`.
+Definidas en `src/core/config.py`, `src/core/ai_config.py` y declaradas en `.env.example`. Todas las rutas relativas se resuelven automáticamente respecto a `BACKEND_ROOT`.
 
-| Variable | Descripción | Obligatoria | Valor por defecto en `config.py` |
+| Variable | Descripción | Obligatoria | Valor por defecto |
 | :--- | :--- | :--- | :--- |
 | `PORT` | Puerto HTTP donde escucha FastAPI/Uvicorn y mapeo de puertos Docker | Sí en Docker / No en local | `8000` |
 | `BASE_PATH_INE` | URL base de la API Action v3 CKAN del INE Guatemala | No | `https://datos.ine.gob.gt/api/3/action` |
@@ -289,14 +303,20 @@ Definidas en `src/core/config.py` y declaradas en `.env.example`. Todas las ruta
 | `RAW_DATA_PATH` | Ruta para almacenamiento Bronce (crudos, GeoJSON y `manifest.jsonl`) | No | `data/raw` |
 | `PROCESSED_DATA_PATH` | Ruta para almacenamiento Silver/Gold (Parquet, mapas y modelos 3D) | No | `data/processed` |
 | `USER_AGENT` | Cabecera HTTP enviada al portal institucional del INE | No | `datathon-ine-2026 (equipo: balam-data-systems)` |
-| `GEMINI_API_KEY` | Clave de API para integraciones con Gemini (definir solo en `.env` local; nunca quemar en código o ejemplos) | No | `""` (vacía por defecto) |
+| `GEMINI_API_KEY` | Clave de API de Google Gemini para `/api/v1/busqueda-ia` (definir solo en `.env` local; nunca quemar en código) | Requerida para IA | `None` |
+| `GEMINI_MODEL` | Modelo primario de Google GenAI para enrutamiento estructurado | No | `gemini-3.1-flash-lite` |
+| `GEMINI_FALLBACK_MODELS` | Modelos de respaldo ante saturación temporal separados por coma | No | `gemini-3.5-flash-lite,gemini-3.8-flash` |
+| `GEMINI_TIMEOUT_MS` | Tiempo máximo de espera por intento al proveedor GenAI (milisegundos) | No | `20000` |
+| `AI_SEARCH_CACHE_TTL_SECONDS` | Tiempo de vida en segundos para caché en memoria del buscador IA | No | `300` |
+| `AI_SEARCH_CACHE_MAXSIZE` | Capacidad máxima de entradas en caché del buscador IA | No | `256` |
+| `AI_SEARCH_RATE_LIMIT` | Límite de consultas por dirección IP en el buscador IA | No | `15/minute` |
 
 ---
 
 ## 8. Documentación Interactiva y Pruebas Automatizadas
 
 - **Scalar API Explorer**: `http://localhost:8000/docs` permite inspeccionar modelos Pydantic v2 y probar peticiones directamente desde el navegador.
-- **Suite de pruebas (`pytest`)**: ejecuta todas las pruebas unitarias y de integración (`test/test_ine.py`, `test/test_process.py`, `test/test_visualizations.py`, `test/test_api_analytics_indicators.py`) desde la raíz del repositorio indicando `PYTHONPATH=.`:
+- **Suite de pruebas (`pytest`)**: ejecuta todas las pruebas unitarias y de integración (`test/test_ai_search.py`, `test/test_ine.py`, `test/test_process.py`, `test/test_visualizations.py`, `test/test_api_analytics_indicators.py`) desde la raíz del repositorio indicando `PYTHONPATH=.`:
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -v
@@ -310,4 +330,4 @@ El frontend en React/Vite (`dataton-ine-balam-data-system-2026-frontend`) consum
 - En desarrollo local, Vite redirige `/api` hacia `http://localhost:8000`.
 - En producción Docker, Nginx realiza proxy inverso de `/api/` hacia `http://api:8000/api/`.
 - CORS está habilitado en `main.py` para permitir integraciones directas cuando se configura `VITE_API_BASE_URL`.
-- Se recomienda usar el puerto 8000 para el backend, asi el despliegue del frontend no se ve comprometido.
+- Se recomienda usar el puerto 8000 para el backend, así el despliegue del frontend no se ve comprometido.

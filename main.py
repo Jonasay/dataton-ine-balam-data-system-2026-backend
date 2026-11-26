@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from scalar_fastapi import get_scalar_api_reference
+from slowapi.errors import RateLimitExceeded
 
+from src.api.v1.endpoints.ai_search_router import limiter as ai_search_limiter
 from src.api.v1.endpoints.ine_router import router as ine_direct_router
 from src.api.v1.endpoints.process_router import router as process_direct_router
 from src.api.v1.endpoints.indicators_router import router as indicators_direct_router
@@ -19,6 +21,22 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+app.state.limiter = ai_search_limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Devolver respuesta HTTP 429 limpia en espanol sin exponer detalles internos."""
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": (
+                "Se ha alcanzado el límite máximo de consultas permitidas por minuto. "
+                "Por favor, espere unos momentos antes de realizar una nueva consulta."
+            )
+        },
+    )
 
 # configuracion cors para integracion directa con aplicaciones frontend
 app.add_middleware(
