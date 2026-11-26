@@ -30,6 +30,7 @@ Para mantener esta guía enfocada en el levantamiento y operación general del s
 | **Tecnologías y Licencias Open Source** | Listado completo de paquetes Python, versiones fijadas, propósito en el sistema, herramientas del sistema, entorno Antigravity / Gemini y licencias. | [docs/TECNOLOGIAS.md](./docs/TECNOLOGIAS.md) |
 | **Arquitectura y Especificación de Endpoints** | Diseño por capas, arquitectura Medallón (Bronce/Silver/Gold), infraestructura de servidores y detalle completo de todos los endpoints registrados en OpenAPI (bajo `/api/v1` y `/health`). | [docs/ARQUITECTURA_Y_ENDPOINTS.md](./docs/ARQUITECTURA_Y_ENDPOINTS.md) |
 | **Guía de Errores y Soluciones** | Diagnóstico y resolución de errores frecuentes al configurar entorno, pipelines de datos, CKAN remoto, Blender (Opcional) y contenedores Docker. | [docs/ERRORES_Y_SOLUCIONES.md](./docs/ERRORES_Y_SOLUCIONES.md) |
+| **Manual de Usuario del Sistema** | Guía general para consultar y utilizar las funciones, datos y herramientas disponibles en Balam Data Systems. | [docs/Manual_Usuario_Balam_Data_Systems.pdf](./docs/Manual_Usuario_Balam_Data_Systems.pdf) |
 
 ---
 
