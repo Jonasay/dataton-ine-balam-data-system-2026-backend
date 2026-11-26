@@ -263,6 +263,8 @@ Una vez iniciado, verifica el estado de salud en:
 
 ### 6.5. Despliegue con Docker y Docker Compose
 
+***NOTA: SI SE USARA DOCKER COMPOSE PARA DESPLEGAR ES IMPORTANTE ESPERAR UNOS SEGUNDOS PARA QUE EL FRONTEND PUEDA RECONCOER AL BACKEND EXPUESTO EN EL DOCKER***
+
 El `Dockerfile` construye la imagen con Python 3.12, dependencias compiladas y Blender headless incluido, y al arrancar ejecuta automáticamente `run_etl_indicators.py`, `run_data_science.py` y `uvicorn`:
 
 1. Asegúrate de tener `.env` configurado con `PORT=8000`.
