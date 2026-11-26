@@ -1,0 +1,278 @@
+{
+  "status": "completado exitosamente",
+  "n_departamentos": 22,
+  "n_variables_descriptivas": 34,
+  "n_pares_correlacion": 55,
+  "n_outliers_identificados": 11,
+  "pca_meta": {
+    "varianza_explicada_pc1": 0.5003,
+    "varianza_explicada_pc2": 0.191,
+    "varianza_explicada_pc3": 0.1088,
+    "varianza_acumulada_3_componentes": 0.8,
+    "cargas_componentes": {
+      "tasa_natalidad_por_1000": {
+        "PC1": -0.291,
+        "PC2": -0.042,
+        "PC3": 0.444
+      },
+      "tasa_mortalidad_por_1000": {
+        "PC1": 0.377,
+        "PC2": -0.043,
+        "PC3": 0.474
+      },
+      "razon_dependencia_demografica": {
+        "PC1": -0.384,
+        "PC2": 0.275,
+        "PC3": 0.202
+      },
+      "tasa_necropsias_por_100k": {
+        "PC1": 0.377,
+        "PC2": 0.317,
+        "PC3": 0.175
+      },
+      "tasa_victimas_viales_por_100k": {
+        "PC1": 0.408,
+        "PC2": 0.076,
+        "PC3": -0.289
+      },
+      "tasa_mortalidad_vial_por_100k": {
+        "PC1": 0.375,
+        "PC2": 0.267,
+        "PC3": -0.337
+      },
+      "tasa_retorno_migratorio_por_10k": {
+        "PC1": -0.155,
+        "PC2": 0.636,
+        "PC3": 0.022
+      },
+      "tasa_matricula_superior_por_10k": {
+        "PC1": 0.297,
+        "PC2": -0.454,
+        "PC3": 0.313
+      },
+      "inflacion_regional_interanual": {
+        "PC1": -0.254,
+        "PC2": -0.365,
+        "PC3": -0.459
+      }
+    }
+  },
+  "clusters_meta": {
+    "0": {
+      "n_departamentos": 2,
+      "departamentos": [
+        "Guatemala",
+        "Sacatepéquez"
+      ],
+      "media_retorno_migratorio": 16.8,
+      "media_necropsias": 83.43,
+      "media_victimas_viales": 113.27,
+      "media_matricula_superior": 460.56,
+      "media_dependencia": 45.92,
+      "media_inflacion": 1.5
+    },
+    "1": {
+      "n_departamentos": 4,
+      "departamentos": [
+        "Huehuetenango",
+        "Quiché",
+        "Baja Verapaz",
+        "Alta Verapaz"
+      ],
+      "media_retorno_migratorio": 46.12,
+      "media_necropsias": 23.06,
+      "media_victimas_viales": 35.06,
+      "media_matricula_superior": 115.37,
+      "media_dependencia": 66.88,
+      "media_inflacion": 2.82
+    },
+    "2": {
+      "n_departamentos": 11,
+      "departamentos": [
+        "Chimaltenango",
+        "Sololá",
+        "Totonicapán",
+        "Quetzaltenango",
+        "Suchitepéquez",
+        "Retalhuleu",
+        "San Marcos",
+        "Petén",
+        "Chiquimula",
+        "Jalapa",
+        "Jutiapa"
+      ],
+      "media_retorno_migratorio": 52.14,
+      "media_necropsias": 51.51,
+      "media_victimas_viales": 40.4,
+      "media_matricula_superior": 160.95,
+      "media_dependencia": 59.74,
+      "media_inflacion": 1.37
+    },
+    "3": {
+      "n_departamentos": 5,
+      "departamentos": [
+        "El Progreso",
+        "Escuintla",
+        "Santa Rosa",
+        "Izabal",
+        "Zacapa"
+      ],
+      "media_retorno_migratorio": 51.81,
+      "media_necropsias": 102.12,
+      "media_victimas_viales": 112.29,
+      "media_matricula_superior": 165.07,
+      "media_dependencia": 55.63,
+      "media_inflacion": 1.0
+    }
+  },
+  "proyecciones_costo_vida": [
+    {
+      "dominio": "Urbana",
+      "costo_actual_percapita": 986.95,
+      "tendencia_mensual_gtq": 3.335,
+      "crecimiento_mensual_pct": 0.338,
+      "proyeccion_tasa_anual_pct": 4.06,
+      "coeficiente_determinacion_r2": 0.9078,
+      "error_estandar_modelo": 0.1879,
+      "proyeccion_3_meses_gtq": 974.9,
+      "proyeccion_6_meses_gtq": 984.9,
+      "proyeccion_12_meses_gtq": 1004.91
+    },
+    {
+      "dominio": "Rural",
+      "costo_actual_percapita": 767.51,
+      "tendencia_mensual_gtq": 2.575,
+      "crecimiento_mensual_pct": 0.335,
+      "proyeccion_tasa_anual_pct": 4.03,
+      "coeficiente_determinacion_r2": 0.8891,
+      "error_estandar_modelo": 0.1607,
+      "proyeccion_3_meses_gtq": 753.19,
+      "proyeccion_6_meses_gtq": 760.91,
+      "proyeccion_12_meses_gtq": 776.36
+    }
+  ],
+  "top_crecimiento_demografico": [
+    {
+      "depto_codigo": 13,
+      "depto_nombre": "Huehuetenango",
+      "region_nombre": "Noroccidente",
+      "poblacion_2024": 1480901,
+      "poblacion_2030": 1635556,
+      "crecimiento_absoluto_2024_2030": 154655,
+      "crecimiento_porcentual_total": 10.44,
+      "tasa_anual_crecimiento_geometrico_pct": 1.67
+    },
+    {
+      "depto_codigo": 16,
+      "depto_nombre": "Alta Verapaz",
+      "region_nombre": "Norte",
+      "poblacion_2024": 1432432,
+      "poblacion_2030": 1576803,
+      "crecimiento_absoluto_2024_2030": 144371,
+      "crecimiento_porcentual_total": 10.08,
+      "tasa_anual_crecimiento_geometrico_pct": 1.61
+    },
+    {
+      "depto_codigo": 14,
+      "depto_nombre": "Quiché",
+      "region_nombre": "Noroccidente",
+      "poblacion_2024": 1137777,
+      "poblacion_2030": 1242254,
+      "crecimiento_absoluto_2024_2030": 104477,
+      "crecimiento_porcentual_total": 9.18,
+      "tasa_anual_crecimiento_geometrico_pct": 1.47
+    },
+    {
+      "depto_codigo": 4,
+      "depto_nombre": "Chimaltenango",
+      "region_nombre": "Central",
+      "poblacion_2024": 784346,
+      "poblacion_2030": 854795,
+      "crecimiento_absoluto_2024_2030": 70449,
+      "crecimiento_porcentual_total": 8.98,
+      "tasa_anual_crecimiento_geometrico_pct": 1.44
+    },
+    {
+      "depto_codigo": 15,
+      "depto_nombre": "Baja Verapaz",
+      "region_nombre": "Norte",
+      "poblacion_2024": 350078,
+      "poblacion_2030": 380867,
+      "crecimiento_absoluto_2024_2030": 30789,
+      "crecimiento_porcentual_total": 8.79,
+      "tasa_anual_crecimiento_geometrico_pct": 1.41
+    }
+  ],
+  "top_vulnerabilidad_ivst": [
+    {
+      "ranking": 1,
+      "depto_codigo": 13,
+      "depto_nombre": "Huehuetenango",
+      "depto_iso": "GT-HU",
+      "region_nombre": "Noroccidente",
+      "indice_vulnerabilidad_ivst": 90.56,
+      "nivel_vulnerabilidad": "Crítica",
+      "cluster_nombre": "Altiplano Rural y Sobrecarga Demográfica",
+      "tasa_retorno_migratorio_por_10k": 57.37,
+      "razon_dependencia_demografica": 72.54,
+      "tasa_matricula_superior_por_10k": 144.97,
+      "inflacion_regional_interanual": 2.64
+    },
+    {
+      "ranking": 2,
+      "depto_codigo": 14,
+      "depto_nombre": "Quiché",
+      "depto_iso": "GT-QC",
+      "region_nombre": "Noroccidente",
+      "indice_vulnerabilidad_ivst": 85.9,
+      "nivel_vulnerabilidad": "Crítica",
+      "cluster_nombre": "Altiplano Rural y Sobrecarga Demográfica",
+      "tasa_retorno_migratorio_por_10k": 49.14,
+      "razon_dependencia_demografica": 70.05,
+      "tasa_matricula_superior_por_10k": 92.5,
+      "inflacion_regional_interanual": 2.64
+    },
+    {
+      "ranking": 3,
+      "depto_codigo": 12,
+      "depto_nombre": "San Marcos",
+      "depto_iso": "GT-SM",
+      "region_nombre": "Suroccidente",
+      "indice_vulnerabilidad_ivst": 85.01,
+      "nivel_vulnerabilidad": "Crítica",
+      "cluster_nombre": "Cinturón Agrícola de Alta Expulsión Migratoria",
+      "tasa_retorno_migratorio_por_10k": 60.48,
+      "razon_dependencia_demografica": 69.15,
+      "tasa_matricula_superior_por_10k": 80.41,
+      "inflacion_regional_interanual": 1.41
+    },
+    {
+      "ranking": 4,
+      "depto_codigo": 17,
+      "depto_nombre": "Petén",
+      "depto_iso": "GT-PE",
+      "region_nombre": "Petén",
+      "indice_vulnerabilidad_ivst": 80.56,
+      "nivel_vulnerabilidad": "Crítica",
+      "cluster_nombre": "Cinturón Agrícola de Alta Expulsión Migratoria",
+      "tasa_retorno_migratorio_por_10k": 62.09,
+      "razon_dependencia_demografica": 65.18,
+      "tasa_matricula_superior_por_10k": 131.22,
+      "inflacion_regional_interanual": 1.68
+    },
+    {
+      "ranking": 5,
+      "depto_codigo": 15,
+      "depto_nombre": "Baja Verapaz",
+      "depto_iso": "GT-BV",
+      "region_nombre": "Norte",
+      "indice_vulnerabilidad_ivst": 76.87,
+      "nivel_vulnerabilidad": "Crítica",
+      "cluster_nombre": "Altiplano Rural y Sobrecarga Demográfica",
+      "tasa_retorno_migratorio_por_10k": 47.56,
+      "razon_dependencia_demografica": 61.24,
+      "tasa_matricula_superior_por_10k": 111.92,
+      "inflacion_regional_interanual": 3.01
+    }
+  ]
+}
