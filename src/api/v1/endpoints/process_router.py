@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from plotly.utils import PlotlyJSONEncoder
 
 from src.core.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from src.analysis.dataset_explorer import (
+    build_dataset_analysis_payload,
+    load_or_process_dataset_parquet,
+    render_dataset_chart_html,
+)
+from src.ingestion.ine import download_resource_file, get_local_resource_status
 from src.process.process import (
     aggregate_parquet,
     build_deckgl_3d_relief_html,
     build_guatemala_relief_scene,
     build_guatemala_sidebar_html,
+    build_map_indicators_catalog,
     create_plotly_choropleth,
     derive_topic_title,
     excel_to_parquet,
@@ -21,15 +31,184 @@ from src.process.process import (
     render_guatemala_with_blender,
 )
 from src.schemas.process import (
+    DatasetResourceAnalysisResponse,
     ExcelToParquetRequest,
-    GeoMapRequest,
-    ParquetAggregateRequest
+    MapIndicatorsResponse,
+    ParquetAggregateRequest,
 )
 
 router = APIRouter(
     prefix="/proceso",
     tags=["Procesamiento - Analitica y Mapas"]
 )
+
+
+def _artifact_stem(ruta_parquet: str, columna_valor: str) -> str:
+    """Construir identificador limpio para archivos generados diferenciando por columna."""
+    base_stem = Path(ruta_parquet).stem
+    if columna_valor and columna_valor != "valor":
+        safe_col = re.sub(r"[^A-Za-z0-9_-]+", "_", columna_valor).strip("_")
+        if safe_col:
+            return f"{base_stem}_{safe_col}"
+    return base_stem
+
+
+def _is_valid_png(png_path: Path) -> bool:
+    """Validar que el archivo png en cache tenga cabecera valida y contenido real."""
+    return (
+        png_path.exists()
+        and png_path.stat().st_size > 100
+        and png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    )
+
+
+# listar indicadores departamentales disponibles para generar mapas y exportaciones 3d
+@router.get("/indicadores-mapa", response_model=MapIndicatorsResponse, summary="Listar indicadores disponibles para mapas")
+def get_map_indicators():
+    """Publicar catalogo de indicadores y periodos disponibles en los archivos parquet procesados."""
+    try:
+        items = build_map_indicators_catalog(PROCESSED_DATA_DIR)
+        return MapIndicatorsResponse(
+            total=len(items),
+            indicadores=items,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"error al listar indicadores para mapas: {exc}")
+
+
+def _analyze_dataset_resource_internal(
+    slug: str,
+    recurso_id: Optional[str],
+    hoja_id: int,
+    agrupar_por: Optional[str],
+    columna_valor: Optional[str],
+    forzar_descarga: bool,
+    regenerar: bool,
+    limite_muestra: int,
+) -> dict:
+    """Verificar descarga local, procesar a parquet y generar graficas de un recurso ine."""
+    from src.api.v1.endpoints.ine_router import get_cached_or_fetch_resources
+
+    resources = get_cached_or_fetch_resources(slug)
+    if not resources:
+        raise HTTPException(status_code=404, detail=f"no se encontraron recursos para el conjunto {slug}")
+
+    if recurso_id:
+        target_resource = next((r for r in resources if r.get("id") == recurso_id), None)
+        if not target_resource:
+            raise HTTPException(status_code=404, detail=f"recurso {recurso_id} no encontrado en {slug}")
+    else:
+        tabular_formats = {"parquet", "xlsx", "csv", "xls", "zip"}
+        target_resource = next(
+            (r for r in resources if str(r.get("formato", "")).lower() in tabular_formats),
+            resources[0],
+        )
+
+    enriched_target = {**target_resource, "dataset": target_resource.get("dataset") or slug}
+    status = get_local_resource_status(
+        enriched_target,
+        base_dir=RAW_DATA_DIR,
+        processed_dir=PROCESSED_DATA_DIR,
+    )
+
+    if not forzar_descarga and status["descargado_local"] and status["ruta_local"]:
+        local_path = Path(status["ruta_local"])
+        ya_estaba_descargado = True
+    else:
+        local_path = download_resource_file(enriched_target, base_dir=RAW_DATA_DIR)
+        ya_estaba_descargado = False
+
+    processed = load_or_process_dataset_parquet(
+        local_path=local_path,
+        slug=slug,
+        hoja_id=hoja_id,
+        processed_dir=PROCESSED_DATA_DIR,
+        regenerar=regenerar,
+    )
+
+    return build_dataset_analysis_payload(
+        df=processed["df"],
+        slug=slug,
+        resource=enriched_target,
+        rel_parquet=processed["rel_parquet"],
+        hojas=processed["hojas"],
+        hoja_actual=processed["hoja_actual"],
+        ya_estaba_descargado=ya_estaba_descargado,
+        ya_estaba_procesado=processed["ya_estaba_procesado"],
+        agrupar_por=agrupar_por,
+        columna_valor=columna_valor,
+        limite_muestra=limite_muestra,
+    )
+
+
+# verificar descarga local, procesar conjunto a parquet y devolver datos con graficas
+@router.get("/dataset/{slug}/analizar", response_model=DatasetResourceAnalysisResponse, summary="Procesar conjunto y generar graficas")
+def analyze_ine_dataset(
+    slug: str,
+    recurso_id: Optional[str] = Query(default=None, description="Id del recurso dentro del conjunto (opcional)"),
+    hoja_id: int = Query(default=1, ge=1, description="Numero de hoja en archivos excel"),
+    agrupar_por: Optional[str] = Query(default=None, description="Columna categorica para agrupar la grafica principal"),
+    columna_valor: Optional[str] = Query(default=None, description="Columna numerica a sumar (si se omite, cuenta registros)"),
+    forzar_descarga: bool = Query(default=False, description="Forzar descarga remota ignorando archivo en disco"),
+    regenerar: bool = Query(default=False, description="Reprocesar parquet ignorando cache procesada"),
+    limite_muestra: int = Query(default=25, ge=5, le=100, description="Cantidad de filas de muestra procesadas"),
+):
+    """Verificar si el conjunto ya existe localmente, procesarlo a parquet y devolver datos y graficas."""
+    try:
+        return _analyze_dataset_resource_internal(
+            slug=slug,
+            recurso_id=recurso_id,
+            hoja_id=hoja_id,
+            agrupar_por=agrupar_por,
+            columna_valor=columna_valor,
+            forzar_descarga=forzar_descarga,
+            regenerar=regenerar,
+            limite_muestra=limite_muestra,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"error al analizar el conjunto {slug}: {exc}")
+
+
+# devolver grafica interactiva plotly en html para cualquier grafica generada del conjunto
+@router.get("/dataset/{slug}/grafica", summary="Visualizar grafica interactiva plotly de un conjunto", response_class=HTMLResponse)
+def get_ine_dataset_chart_html(
+    slug: str,
+    recurso_id: Optional[str] = Query(default=None),
+    hoja_id: int = Query(default=1, ge=1),
+    agrupar_por: Optional[str] = Query(default=None),
+    columna_valor: Optional[str] = Query(default=None),
+    indice_grafica: int = Query(default=0, ge=0, le=5),
+):
+    """Renderizar grafica interactiva en plotly a partir del conjunto procesado en cache."""
+    try:
+        payload = _analyze_dataset_resource_internal(
+            slug=slug,
+            recurso_id=recurso_id,
+            hoja_id=hoja_id,
+            agrupar_por=agrupar_por,
+            columna_valor=columna_valor,
+            forzar_descarga=False,
+            regenerar=False,
+            limite_muestra=5,
+        )
+        charts = payload.get("graficas", [])
+        if not charts:
+            raise HTTPException(status_code=404, detail="no hay variables graficables en este recurso")
+        selected_chart = charts[min(indice_grafica, len(charts) - 1)]
+        title = f"{payload.get('nombre_recurso') or slug}"
+        return HTMLResponse(content=render_dataset_chart_html(selected_chart, title))
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"error al generar grafica de conjunto: {exc}")
 
 
 # inspeccionar hojas de calculo de un archivo excel y obtener vista previa
@@ -66,6 +245,10 @@ def get_excel_sheets(
         }
     except HTTPException:
         raise
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al leer archivo excel: {exc}")
 
@@ -124,6 +307,10 @@ def get_parquet_summary(
             limit=limite
         )
         return summary_data
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar resumen de parquet: {exc}")
 
@@ -140,6 +327,10 @@ def post_parquet_summary(body: ParquetAggregateRequest):
             limit=body.limite
         )
         return summary_data
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar resumen de parquet: {exc}")
 
@@ -147,7 +338,7 @@ def post_parquet_summary(body: ParquetAggregateRequest):
 # generar y visualizar mapa interactivo en html con folium
 @router.get("/mapa-html", summary="Generar y visualizar mapa interactivo folium", response_class=HTMLResponse)
 def get_interactive_folium_map(
-    ruta_geo: str = Query(..., description="Ruta del archivo shapefile o geojson dentro de data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del archivo shapefile o geojson dentro de data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del archivo parquet dentro de data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA", description="Columna codigo en capa espacial"),
     columna_codigo_parquet: str = Query(default="cod", description="Columna codigo en parquet"),
@@ -170,7 +361,7 @@ def get_interactive_folium_map(
         )
 
         topic_title = titulo_estadistica or derive_topic_title(ruta_parquet, columna_valor)
-        parquet_stem = Path(ruta_parquet).stem
+        parquet_stem = _artifact_stem(ruta_parquet, columna_valor)
         map_filename = f"mapa_{parquet_stem}.html"
         output_file = PROCESSED_DATA_DIR / map_filename
 
@@ -190,6 +381,10 @@ def get_interactive_folium_map(
             "Content-Disposition": f'{disposition}; filename="{map_filename}"'
         }
         return HTMLResponse(content=html_content, headers=headers)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar mapa folium: {exc}")
 
@@ -197,7 +392,7 @@ def get_interactive_folium_map(
 # generar mapa coropletico con plotly para paneles web o streamlit
 @router.get("/mapa-plotly", summary="Generar mapa coropletico con plotly")
 def get_plotly_choropleth_map(
-    ruta_geo: str = Query(..., description="Ruta del archivo shapefile o geojson dentro de data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del archivo shapefile o geojson dentro de data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del archivo parquet dentro de data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA", description="Columna codigo en capa espacial"),
     columna_codigo_parquet: str = Query(default="cod", description="Columna codigo en parquet"),
@@ -228,7 +423,7 @@ def get_plotly_choropleth_map(
             topic_title=topic_title
         )
 
-        parquet_stem = Path(ruta_parquet).stem
+        parquet_stem = _artifact_stem(ruta_parquet, columna_valor)
         map_filename = f"mapa_plotly_{parquet_stem}.html"
         output_file = PROCESSED_DATA_DIR / map_filename
 
@@ -246,6 +441,7 @@ def get_plotly_choropleth_map(
                 else:
                     html_markup += sidebar_markup
 
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             output_file.write_text(html_markup, encoding="utf-8")
             disposition = "attachment" if descargar else "inline"
             headers = {
@@ -253,18 +449,23 @@ def get_plotly_choropleth_map(
             }
             return HTMLResponse(content=html_markup, headers=headers)
 
+        fig_payload = json.loads(json.dumps(fig.to_dict(), cls=PlotlyJSONEncoder))
         return JSONResponse(content={
-            **fig.to_dict(),
+            **fig_payload,
             "archivo_generado": map_filename
         })
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar mapa plotly: {exc}")
 
 
-# mapa 3D iteractivo con deck.gl
+# mapa 3d iteractivo con deck.gl
 @router.get("/mapa-3d-relieve", summary="Mapa 3D interactivo con relieve segun datos", response_class=HTMLResponse)
 def get_3d_relief_map(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),
@@ -292,11 +493,15 @@ def get_3d_relief_map(
             color_mode=estilo_color,
             max_elevation_m=altura_max_m
         )
-        stem = Path(ruta_parquet).stem
+        stem = _artifact_stem(ruta_parquet, columna_valor)
         disposition = "attachment" if descargar else "inline"
         return HTMLResponse(content=html, headers={
             "Content-Disposition": f'{disposition}; filename="mapa_3d_{stem}.html"'
         })
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar mapa 3d: {exc}")
 
@@ -304,7 +509,7 @@ def get_3d_relief_map(
 # modelo 3d imprimible (stl o glb con camara incluida)
 @router.get("/modelo-3d-impresion", summary="Generar modelo 3D imprimible o para Blender")
 def get_printable_3d_model(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),
@@ -331,7 +536,7 @@ def get_printable_3d_model(
         scene = build_guatemala_relief_scene(
             merged_gdf,
             value_col=columna_valor,
-            code_col=columna_codigo_parquet,
+            code_col="cod",
             name_col=columna_nombre,
             target_width_mm=ancho_mm,
             base_mm=grosor_base_mm,
@@ -341,8 +546,9 @@ def get_printable_3d_model(
             color_mode=estilo_color
         )
 
-        stem = Path(ruta_parquet).stem
+        stem = _artifact_stem(ruta_parquet, columna_valor)
         fmt = formato.lower().strip()
+        PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         # caso 1: zip con stls individuales por departamento
         if fmt == "zip":
@@ -368,9 +574,13 @@ def get_printable_3d_model(
             return FileResponse(str(output_file), media_type="text/plain", filename=output_file.name)
 
         # caso 4 por defecto: glb con departamentos separados y coloreados para blender
-        output_file = PROCESSED_DATA_DIR / f"modelo_3d_{stem}.glb"
+        output_file = PROCESSED_DATA_DIR / f"modelo_3d_{stem}_{estilo_color}.glb"
         scene.export(str(output_file))
         return FileResponse(str(output_file), media_type="model/gltf-binary", filename=output_file.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al generar modelo 3d: {exc}")
 
@@ -378,7 +588,7 @@ def get_printable_3d_model(
 # render 3d hiperrealista con blender
 @router.get("/render-3d-blender", summary="Renderizar modelo 3D con Blender headless a imagen PNG")
 def get_blender_3d_render(
-    ruta_geo: str = Query(..., description="Ruta del shapefile o geojson en data/raw"),
+    ruta_geo: str = Query(default="geo/departamentos_gt.geojson", description="Ruta del shapefile o geojson en data/raw"),
     ruta_parquet: str = Query(..., description="Ruta del parquet en data/processed"),
     columna_codigo_geo: str = Query(default="COD_COLUMNA"),
     columna_codigo_parquet: str = Query(default="cod"),
@@ -389,24 +599,35 @@ def get_blender_3d_render(
     ancho_px: int = Query(default=1280, ge=320, le=3840, description="Ancho de la imagen renderizada en pixeles"),
     alto_px: int = Query(default=720, ge=240, le=2160, description="Alto de la imagen renderizada en pixeles"),
     descargar: bool = Query(default=False, description="Descargar el archivo PNG en lugar de visualizarlo inline"),
+    regenerar: bool = Query(default=False, description="Forzar nuevo renderizado ignorando cache en disco"),
 ):
     """Renderizar modelo de relieve 3D de Guatemala en Blender con iluminacion de estudio profesional."""
     try:
+        parquet_stem = _artifact_stem(ruta_parquet, columna_valor)
+        renders_dir = PROCESSED_DATA_DIR / "renders_blender"
+        renders_dir.mkdir(parents=True, exist_ok=True)
+        glb_path = renders_dir / f"escena_{parquet_stem}_{estilo_color}.glb"
+        png_path = renders_dir / f"render_blender_{parquet_stem}_{estilo_color}_{ancho_px}x{alto_px}.png"
+
+        disposition = "attachment" if descargar else "inline"
+        headers = {
+            "Content-Disposition": f'{disposition}; filename="{png_path.name}"'
+        }
+
+        if not regenerar and abs(grosor_base_mm - 0.6) < 1e-6 and _is_valid_png(png_path):
+            return FileResponse(str(png_path), media_type="image/png", headers=headers)
+
         geo_data = load_geodata(ruta_geo, target_crs=4326, code_col=columna_codigo_geo)
         merged_gdf = merge_geo_with_parquet(
             geo_df=geo_data, parquet_path=ruta_parquet,
             code_col=columna_codigo_parquet, value_col=columna_valor
         )
 
-        parquet_stem = Path(ruta_parquet).stem
-        glb_path = PROCESSED_DATA_DIR / f"modelo_3d_{parquet_stem}.glb"
-        png_path = PROCESSED_DATA_DIR / f"render_3d_{parquet_stem}.png"
-
-        # generar escena 3D y exportar a glb con silueta de guatemala
+        # generar escena 3d y exportar a glb con silueta de guatemala
         scene = build_guatemala_relief_scene(
             merged_gdf,
             value_col=columna_valor,
-            code_col=columna_codigo_parquet,
+            code_col="cod",
             name_col=columna_nombre,
             target_width_mm=150.0,
             base_mm=grosor_base_mm,
@@ -426,10 +647,10 @@ def get_blender_3d_render(
             color_mode=estilo_color
         )
 
-        disposition = "attachment" if descargar else "inline"
-        headers = {
-            "Content-Disposition": f'{disposition}; filename="render_3d_{parquet_stem}.png"'
-        }
         return FileResponse(str(png_path), media_type="image/png", headers=headers)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"error al renderizar con blender: {exc}")

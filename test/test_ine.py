@@ -243,7 +243,7 @@ def test_api_get_resources(mock_res):
 def test_api_download_resource(mock_res, mock_download, tmp_path):
     """Verificar endpoint de descarga y que no lanza error de indices de string."""
     fake_file = tmp_path / "censo.csv"
-    fake_file.write_text("col1,col2\n1,2")
+    fake_file.write_bytes(b"col1,col2\n1,2")
 
     mock_res.return_value = [
         {"id": "res-ok", "nombre": "censo.csv", "dataset": "censo-2025", "url": "https://example.com/censo.csv"}
@@ -262,6 +262,45 @@ def test_api_download_resource(mock_res, mock_download, tmp_path):
     # probar respuesta cuando el recurso no existe
     resp_404 = client.get("/api/v1/ine/censo-2025/descargar/recurso-inexistente")
     assert resp_404.status_code == 404
+
+
+def test_api_download_and_preview_reuse_local_cache(tmp_path, monkeypatch):
+    """Verificar que descarga y vista previa reutilicen archivo local sin volver a descargar."""
+    raw_dir = tmp_path / "raw"
+    proc_dir = tmp_path / "processed"
+    dataset_dir = raw_dir / "recursos-hidricos"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    cached_csv = dataset_dir / "agua.csv"
+    cached_csv.write_text("departamento,caudal\nGuatemala,120\nPetén,85\n", encoding="utf-8")
+
+    monkeypatch.setattr("src.api.v1.endpoints.ine_router.RAW_DATA_DIR", raw_dir)
+    monkeypatch.setattr("src.api.v1.endpoints.ine_router.PROCESSED_DATA_DIR", proc_dir)
+
+    mock_resources = [
+        {
+            "id": "res-agua-1",
+            "nombre": "agua.csv",
+            "formato": "csv",
+            "url": "https://datos.ine.gob.gt/files/agua.csv",
+            "dataset": "recursos-hidricos",
+        }
+    ]
+
+    with patch("src.api.v1.endpoints.ine_router.get_dataset_resources", return_value=mock_resources), \
+         patch("src.api.v1.endpoints.ine_router.download_resource_file") as mock_dl:
+        res_list = client.get("/api/v1/ine/recursos-hidricos/recursos")
+        assert res_list.status_code == 200
+        assert res_list.json()["recursos"][0]["descargado_local"] is True
+
+        res_prev = client.get("/api/v1/ine/recursos-hidricos/vista-previa?recurso_id=res-agua-1")
+        assert res_prev.status_code == 200
+        assert res_prev.json()["origen"] == "archivo_local_cache"
+        assert res_prev.json()["total_filas_muestra"] == 2
+
+        res_dl = client.get("/api/v1/ine/recursos-hidricos/descargar/res-agua-1")
+        assert res_dl.status_code == 200
+        assert b"Guatemala,120" in res_dl.content
+        mock_dl.assert_not_called()
 
 
 @patch("src.api.v1.endpoints.ine_router.has_remote_changed")
@@ -361,3 +400,40 @@ def test_api_preview_dataset_autodownload(mock_read, mock_dl, mock_ds, mock_res,
     assert data["origen"] == "archivo_local_autodescargado"
     assert data["columnas"] == ["departamento", "accidentes"]
     assert len(data["filas_muestra"]) == 1
+
+
+@patch("src.api.v1.endpoints.ine_router.get_dataset_resources")
+@patch("src.api.v1.endpoints.ine_router.search_datastore")
+def test_api_preview_dataset_datastore_spanish_keys(mock_ds, mock_res):
+    """Verificar vista previa cuando search_datastore retorna llaves normalizadas en espanol (campos y registros)."""
+    mock_res.return_value = [
+        {"id": "res-es", "nombre": "Recurso ES", "formato": "csv", "url": "https://example.com/r.csv"}
+    ]
+    mock_ds.return_value = {
+        "campos": [{"id": "depto"}, {"id": "total"}],
+        "registros": [{"depto": "Guatemala", "total": 100}]
+    }
+
+    resp = client.get("/api/v1/ine/slug-es/vista-previa?limite=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["origen"] == "datastore_ckan"
+    assert data["columnas"] == ["depto", "total"]
+    assert data["filas_muestra"] == [{"depto": "Guatemala", "total": 100}]
+
+
+def test_api_root_and_health_endpoints():
+    """Verificar endpoints de estado raiz (/), salud (/health) y documentacion scalar (/docs)."""
+    resp_home = client.get("/", follow_redirects=False)
+    assert resp_home.status_code in (302, 307)
+
+    resp_health = client.get("/health")
+    assert resp_health.status_code == 200
+    health_data = resp_health.json()
+    assert health_data["status"] == "ok"
+    assert "Balam Data Systems" in health_data["service"]
+
+    resp_docs = client.get("/docs")
+    assert resp_docs.status_code == 200
+    assert "text/html" in resp_docs.headers.get("content-type", "")
+

@@ -224,8 +224,9 @@ def test_api_get_interactive_folium_map(mock_load, mock_merge, mock_export, tmp_
 @patch("src.api.v1.endpoints.process_router.create_plotly_choropleth")
 @patch("src.api.v1.endpoints.process_router.merge_geo_with_parquet")
 @patch("src.api.v1.endpoints.process_router.load_geodata")
-def test_api_get_plotly_choropleth_map(mock_load, mock_merge, mock_plotly):
+def test_api_get_plotly_choropleth_map(mock_load, mock_merge, mock_plotly, tmp_path, monkeypatch):
     """Verificar endpoint api para mapa coropletico plotly en formatos html y json."""
+    monkeypatch.setattr("src.api.v1.endpoints.process_router.PROCESSED_DATA_DIR", tmp_path)
     mock_fig = MagicMock()
     mock_fig.to_html.return_value = "<div>mapa plotly</div>"
     mock_fig.to_dict.return_value = {"data": [], "layout": {}}
@@ -358,4 +359,85 @@ def test_api_get_blender_3d_render(mock_load, mock_merge, mock_scene, mock_rende
         response = client.get("/api/v1/proceso/render-3d-blender?ruta_geo=geo.shp&ruta_parquet=t.parquet&estilo_color=negro")
         assert response.status_code == 200
         assert response.content == b"PNG_MOCK_RENDER"
+
+
+def test_api_get_map_indicators():
+    """Verificar catalogo de indicadores departamentales para mapas."""
+    response = client.get("/api/v1/proceso/indicadores-mapa")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] >= 1
+    assert len(data["indicadores"]) == data["total"]
+    first = data["indicadores"][0]
+    for field in ["id", "tema", "indicador", "periodo", "ruta_parquet", "columna_codigo_parquet", "columna_valor", "titulo_mapa"]:
+        assert field in first
+
+
+def test_api_plotly_map_json_serializes_ndarray(tmp_path, monkeypatch):
+    """Verificar serializacion json cuando plotly figura contiene arreglos numpy."""
+    import numpy as np
+    monkeypatch.setattr("src.api.v1.endpoints.process_router.PROCESSED_DATA_DIR", tmp_path)
+    with patch("src.api.v1.endpoints.process_router.load_geodata"), \
+         patch("src.api.v1.endpoints.process_router.merge_geo_with_parquet"), \
+         patch("src.api.v1.endpoints.process_router.create_plotly_choropleth") as mock_plotly:
+        mock_fig = MagicMock()
+        mock_fig.to_dict.return_value = {"data": [{"z": np.array([1.5, 2.5])}], "layout": {}}
+        mock_plotly.return_value = mock_fig
+
+        resp = client.get("/api/v1/proceso/mapa-plotly?ruta_geo=geo.shp&ruta_parquet=t.parquet&formato=json")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["data"][0]["z"] == [1.5, 2.5]
+
+
+def test_api_analyze_dataset_verifies_cache_and_builds_charts(tmp_path, monkeypatch):
+    """Verificar procesamiento de conjunto, generacion de graficas y no re-descarga."""
+    raw_dir = tmp_path / "raw"
+    proc_dir = tmp_path / "processed"
+    monkeypatch.setattr("src.api.v1.endpoints.process_router.RAW_DATA_DIR", raw_dir)
+    monkeypatch.setattr("src.api.v1.endpoints.process_router.PROCESSED_DATA_DIR", proc_dir)
+
+    mock_resources = [
+        {
+            "id": "res-hidro-1",
+            "nombre": "Monitoreo Agua.csv",
+            "formato": "csv",
+            "url": "https://datos.ine.gob.gt/files/monitoreo.csv",
+            "dataset": "recursos-hidricos",
+        }
+    ]
+
+    def fake_download(resource, base_dir=raw_dir):
+        target = base_dir / "recursos-hidricos" / "monitoreo.csv"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "departamento,licencia,caudal\nGuatemala,Si,120\nGuatemala,No,80\nPetén,Si,95\n",
+            encoding="utf-8",
+        )
+        return target
+
+    with patch("src.api.v1.endpoints.ine_router.get_cached_or_fetch_resources", return_value=mock_resources), \
+         patch("src.api.v1.endpoints.process_router.download_resource_file", side_effect=fake_download) as mock_dl:
+        # primera llamada: descarga una vez y procesa parquet + graficas
+        r1 = client.get("/api/v1/proceso/dataset/recursos-hidricos/analizar")
+        assert r1.status_code == 200
+        body1 = r1.json()
+        assert body1["ya_estaba_descargado"] is False
+        assert body1["ya_estaba_procesado"] is False
+        assert body1["total_filas"] == 3
+        assert len(body1["graficas"]) >= 2
+        assert mock_dl.call_count == 1
+
+        # segunda llamada: reutiliza archivo descargado y parquet procesado sin volver a descargar
+        r2 = client.get("/api/v1/proceso/dataset/recursos-hidricos/analizar")
+        assert r2.status_code == 200
+        body2 = r2.json()
+        assert body2["ya_estaba_descargado"] is True
+        assert body2["ya_estaba_procesado"] is True
+        assert mock_dl.call_count == 1
+
+        # grafica interactiva plotly html
+        r_html = client.get("/api/v1/proceso/dataset/recursos-hidricos/grafica?indice_grafica=0")
+        assert r_html.status_code == 200
+        assert "plotly" in r_html.text.lower()
 
